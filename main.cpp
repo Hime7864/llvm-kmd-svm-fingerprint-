@@ -526,32 +526,58 @@ void ipi_probe(TSC_DATA* output)
 }
 
 
+struct RTC_CPPC_DATA
+{
+	int target_core;
+    MSR_CPPC_REQUEST cppc;
+	TSC_DATA logical_core[2];
+};
+
+void ipi_core_handler(RTC_CPPC_DATA* output)
+{
+    if (!output)
+        return;
+    ComputeUnitIdentifiers data;
+    data.AsUINT32 = CPUID::query(0x8000001E).ebx;
+
+    auto logic_core_number = CPUID::current_core_number();
+    auto core_number = data.ComputeUnitId;
+
+    auto coreid = KeGetCurrentProcessorNumberEx(nullptr);
+
+    if (data.ComputeUnitId == output->target_core)
+    {
+        auto old = MSR::CPPC_REQUEST();
+        MSR::CPPC_REQUEST(output->cppc);
+
+        int idx = coreid % 2;
+        TSC_DATA tsc_data;
+        DTC::ProbeCounters(&tsc_data);
+        output->logical_core[idx].aperf = tsc_data.aperf;
+        output->logical_core[idx].mperf = tsc_data.mperf;
+        output->logical_core[idx].energy = tsc_data.energy;
+        output->logical_core[idx].msr_tsc = tsc_data.msr_tsc;
+        output->logical_core[idx].io_apicTimer = tsc_data.io_apicTimer;
+        output->logical_core[idx].rdtsc = tsc_data.rdtsc;
+        output->logical_core[idx].rdtscp = tsc_data.rdtscp;
+        output->logical_core[idx].counter = tsc_data.counter;
+        output->logical_core[idx].pstate = tsc_data.pstate;
+
+        MSR::CPPC_REQUEST(old);
+    }
+    return;
+}
+
+void ipi_core(int coreid, RTC_CPPC_DATA* output)
+{
+	KeIpiGenericCall(ipi_core_handler, output);
+    return;
+}
+
 NTSTATUS DriverEntry()
 {
-
-	TSC_DATA tsc_data[2];
-    KeIpiGenericCall(ipi_probe, tsc_data);
-
-
-
-    for (int i = 0; i < 2; i++)
-    {
-        printf("%i %i %i %i %i %i %i %i %i",
-            tsc_data[i].aperf,
-            tsc_data[i].mperf,
-            tsc_data[i].energy,
-            tsc_data[i].msr_tsc,
-            tsc_data[i].io_apicTimer,
-            tsc_data[i].rdtsc,
-            tsc_data[i].rdtscp,
-            tsc_data[i].counter,
-            tsc_data[i].pstate
-        );
-    }
-
-    auto total = tsc_data[0].counter + tsc_data[1].counter;
-    
-	printf("Total Count: %i\n", total);
+    RTC_CPPC_DATA data{0};
+    ipi_core(0, &data);
 
 
 
