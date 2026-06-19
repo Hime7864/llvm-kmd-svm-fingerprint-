@@ -640,6 +640,108 @@ void ProbeCore(RTC_CPPC_DATA* output)
     return;
 }
 
+struct TSC_SANITY_DATA
+{
+    double tsc_desync_ratio;
+    double interval_desync_ratio;
+    UINT64 rdtsc_delta_ajusted;
+    UINT64 reported_cycles;
+    UINT64 missing_cycles;
+    UINT64 counter_total;
+
+    bool is_tsc_desynced()
+    {
+        return tsc_desync_ratio > 0.05;
+	}
+
+    bool is_interval_desynced()
+    {
+        return interval_desync_ratio > 0.05;
+	}
+
+    bool is_reported_cycles_missing()
+    {
+        auto batch_reported_cycles = reported_cycles / counter_total;
+        auto batch_expected_cycles = (reported_cycles + missing_cycles) / counter_total;
+
+        return abs64(batch_reported_cycles - batch_expected_cycles) > 20;
+    }
+};
+
+void ProtoSanityCheckTsc(TSC_SANITY_DATA* output)
+{
+    if (!output)
+        return;
+    RTC_CPPC_DATA data{ 0 };
+    auto cppc_capabilities = MSR::CPPC_CAPABILITY_1();
+    data.cppc.MinPerf = cppc_capabilities.LowestPerf;
+    data.cppc.MaxPerf = cppc_capabilities.HighestPerf;
+    data.cppc.DesPerf = cppc_capabilities.NominalPerf;
+
+    data.target_core = 0;
+    ProbeCore(&data);
+
+    auto mperf_delta = data.logical_core_end[0].mperf - data.logical_core_start[0].mperf;
+    auto msr_tsc_delta = data.logical_core_end[0].msr_tsc - data.logical_core_start[0].msr_tsc;
+    auto rdtsc_delta = data.logical_core_end[0].rdtsc - data.logical_core_start[0].rdtsc;
+    auto rdtsp_delta = data.logical_core_end[0].rdtscp - data.logical_core_start[0].rdtscp;
+
+    double sync_ratio = (double)mperf_delta / (double)msr_tsc_delta;
+    sync_ratio += (double)mperf_delta / (double)rdtsc_delta;
+    sync_ratio += (double)mperf_delta / (double)rdtsp_delta;
+
+	output->tsc_desync_ratio = (sync_ratio / 3.0) - 1.0;
+
+    auto io_apic_ratio = 920000.0 / (double)(data.logical_core_end[0].io_apicTimer - data.logical_core_start[0].io_apicTimer);
+    auto reported_aperf_delta = data.logical_core_end[0].aperf - data.logical_core_start[0].aperf;
+    auto reported_MHz_ratio = (double)reported_aperf_delta / (double)(data.logical_core_end[0].mperf - data.logical_core_start[0].mperf);
+    auto counter_total = data.logical_core_end[0].counter + data.logical_core_end[1].counter;
+
+    auto counter_total_ajusted = (UINT64)((double)counter_total * io_apic_ratio);
+    auto mperf_delta_ajusted = (UINT64)((double)mperf_delta * io_apic_ratio);
+    auto msr_tsc_delta_ajusted = (UINT64)((double)msr_tsc_delta * io_apic_ratio);
+    auto rdtsc_delta_ajusted = (UINT64)((double)rdtsc_delta * io_apic_ratio);
+    auto rdtsp_delta_ajusted = (UINT64)((double)rdtsp_delta * io_apic_ratio);
+    auto reported_aperf_delta_ajusted = (UINT64)((double)reported_aperf_delta * io_apic_ratio);
+
+    auto p0_MHz = MSR::PSTATE(0).get_frequency_mhz() * 1000;
+
+    double MHz_ratio = (double)p0_MHz / (double)mperf_delta_ajusted;
+    MHz_ratio += (double)p0_MHz / (double)msr_tsc_delta_ajusted;
+    MHz_ratio += (double)p0_MHz / (double)rdtsc_delta_ajusted;
+    MHz_ratio += (double)p0_MHz / (double)rdtsp_delta_ajusted;
+
+    auto MHz_ratio_total = 1.0 - (MHz_ratio / 4.0);
+
+	output->interval_desync_ratio = MHz_ratio_total;
+
+    auto reported_cycles = reported_aperf_delta_ajusted;
+    auto missing_cycles = abs64((UINT64)(reported_aperf_delta_ajusted * MHz_ratio_total));
+
+    auto batch_reported_cycles = reported_cycles / counter_total_ajusted;
+    auto batch_expected_cycles = (reported_aperf_delta_ajusted + missing_cycles) / counter_total_ajusted;
+
+    output->reported_cycles = reported_cycles;
+	output->missing_cycles = missing_cycles;
+	output->counter_total = counter_total_ajusted;
+
+    return;
+
+}
+
+
+void SanityCheckTsc(TSC_SANITY_DATA* output)
+{
+    TSC_SANITY_DATA sanity_data[3]{ 0 };
+    for (int i = 0; i < 3; i++)
+        ProtoSanityCheckTsc(&sanity_data[i]);
+
+    for (int i = 0; i < 3; i++)
+        if (sanity_data[i].missing_cycles < output->missing_cycles || output->missing_cycles == 0)
+            *output = sanity_data[i];
+    return;
+}
+
 void run_test()
 {
     RTC_CPPC_DATA data{ 0 };
@@ -730,6 +832,29 @@ void run_test()
 NTSTATUS DriverEntry()
 {
 	printf("Starting detection...\n");
-    run_test();
+    TSC_SANITY_DATA tsc_sanity{ 0 };
+	SanityCheckTsc(&tsc_sanity);
+    
+    if (tsc_sanity.is_interval_desynced())
+        printf("   [Flagged] - Interval Desynchronization: %i%%\n", (int)(tsc_sanity.interval_desync_ratio * 100.0));
+    else
+        printf("   [Normal]");
+
+    if(tsc_sanity.is_tsc_desynced())
+		printf("   [Flagged] - TSC Desynchronization: %i%%\n", (int)(tsc_sanity.tsc_desync_ratio * 100.0));
+    else
+        printf("   [Normal]");
+
+    if (tsc_sanity.is_reported_cycles_missing())
+    {
+        printf("   [Flagged] - Workload Desynchronization: %i\n", tsc_sanity.missing_cycles);
+        printf("               RTC Missing %i Cycles\n", (tsc_sanity.missing_cycles / tsc_sanity.reported_cycles) * tsc_sanity.rdtsc_delta_ajusted);
+    }
+    else
+        printf("   [Normal]");
+
+	printf("Detection complete.\n");
+
+
     return STATUS_SUCCESS;
 }
