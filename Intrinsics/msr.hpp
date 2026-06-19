@@ -546,6 +546,47 @@ struct MSR_CPPC_STATUS
     };
 };
 
+struct MSR_L3_RAPL_POWER_UNIT_0
+{
+    union
+    {
+        UINT64 AsUINT64;
+        struct
+        {
+            UINT64 PowerUnits : 4;
+            UINT64 Reserved0 : 4;
+            UINT64 EnergyStatusUnits : 5;
+            UINT64 Reserved1 : 3;
+            UINT64 TimeUnits : 4;
+            UINT64 Reserved2 : 44;
+        };
+    };
+};
+
+struct MSR_CORE_ENERGY_STAT
+{
+    union
+    {
+        UINT64 AsUINT64;
+        struct
+        {
+            UINT64 TotalEnergyConsumed : 64;
+        };
+    };
+};
+
+struct MSR_L3_PACKAGE_ENERGY_STATUS
+{
+    union
+    {
+        UINT64 AsUINT64;
+        struct
+        {
+            UINT64 TotalEnergyConsumed : 64;
+        };
+    };
+};
+
 struct MSR_L3_QOS_ABMC_CFG
 {
     union
@@ -637,6 +678,9 @@ public:
     static constexpr UINT32 _MSR_CPPC_CAPABILITY_2 = 0xC00102B2UL;
     static constexpr UINT32 _MSR_CPPC_REQUEST = 0xC00102B3UL;
     static constexpr UINT32 _MSR_CPPC_STATUS = 0xC00102B4UL;
+    static constexpr UINT32 _MSR_L3_RAPL_POWER_UNIT_0 = 0xC0010299UL;
+    static constexpr UINT32 _MSR_CORE_ENERGY_STAT = 0xC001029AUL;
+    static constexpr UINT32 _MSR_L3_PACKAGE_ENERGY_STATUS = 0xC001029BUL;
     static constexpr UINT32 _MSR_L3_QOS_ABMC_CFG = 0xC00003FDUL;
     static constexpr UINT32 _MSR_TSC = 0x00000010UL;
     static constexpr UINT32 _MSR_TSC_DEADLINE = 0x000006E0UL;
@@ -782,6 +826,12 @@ public:
     static MSR_CPPC_STATUS CPPC_STATUS();
 
     static MSR_L3_QOS_ABMC_CFG L3_QOS_ABMC_CFG();
+
+    static MSR_L3_RAPL_POWER_UNIT_0 L3_RAPL_POWER_UNIT_0();
+
+    static MSR_CORE_ENERGY_STAT CORE_ENERGY_STAT();
+
+    static MSR_L3_PACKAGE_ENERGY_STATUS L3_PACKAGE_ENERGY_STATUS();
 
     static MSR_PSTATE PSTATE(int level);
 

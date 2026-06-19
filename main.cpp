@@ -214,6 +214,7 @@ struct TSC_DATA
     UINT64 rdtsc;
     UINT64 rdtscp;
     UINT64 counter;
+    UINT64 pstate;
 };
 
 void read_tsc_data(TSC_DATA* data)
@@ -335,57 +336,6 @@ bool dtc_pstate_shadowing()
     return score > 2;
 }
 
-MSR_CPPC_REQUEST SetPerformance(UINT64 performance)
-{
-    auto REQUEST = MSR::CPPC_REQUEST();
-    auto old = REQUEST;
-    REQUEST.DesPerf = performance;
-    MSR::CPPC_REQUEST(REQUEST);
-    return old;
-}
-
-void RestorePerformance(MSR_CPPC_REQUEST request)
-{
-    MSR::CPPC_REQUEST(request);
-}
-
-void spin_100ms()
-{
-    UINT64 watt = _mm_readmsr(0xC001029B);
-    while (watt == _mm_readmsr(0xC001029B))
-        _mm_pause();
-    return;
-}
-
-void Pause()
-{
-    for (int i = 0; i < 10; i++)
-    {
-		auto data = _mm_readmsr(0xC001029A);
-        while (data == _mm_readmsr(0xC001029A))
-			_mm_pause();
-    }
-    return;
-}
-
-void ipi_thing()
-{
-    auto cppc = MSR::CPPC_CAPABILITY_1();
-    MSR_CPPC_REQUEST start = MSR::CPPC_REQUEST();
-    auto start_cpy = start;
-    start_cpy.MinPerf = cppc.LowestPerf;
-    start_cpy.MaxPerf = cppc.HighestPerf;
-    MSR::CPPC_REQUEST(start_cpy);
-    Pause();
-    for (int i = cppc.LowestPerf; i < cppc.HighestPerf; i+=10)
-    {
-        SetPerformance(i);
-        SingleRTC::rdtsc();
-    }
-    MSR::CPPC_REQUEST(start);
-    return;
-}
-
 struct DTC
 {
     static bool PowerStateElevation()
@@ -427,7 +377,7 @@ struct DTC
         unit = _mm_readmsr(0xC001029B);
         while (unit == _mm_readmsr(0xC001029B))
         {
-            MSR::EFER().svme;
+            _mm_readmsr(MSR::_MSR_EFER);
             cnt++;
         }
 
@@ -443,6 +393,42 @@ struct DTC
             out_delta->rdtsc = end.rdtsc - start.rdtsc;
             out_delta->rdtscp = end.rdtscp - start.rdtscp;
             out_delta->counter = cnt;
+            out_delta->pstate = MSR::PSTATE_STATUS().CurPstate;
+        }
+
+        return;
+    }
+
+    static void ProbeCounters(TSC_DATA* out_delta)
+    {
+        UINT64 unit = _mm_readmsr(0xC001029B);
+        while (unit == _mm_readmsr(0xC001029B))
+            _mm_pause();
+
+        TSC_DATA start, end;
+        read_tsc_data(&start);
+
+        int cnt = 0;
+        unit = _mm_readmsr(0xC001029B);
+        while (unit == _mm_readmsr(0xC001029B))
+        {
+            _mm_readmsr(MSR::_MSR_EFER);
+            cnt++;
+        }
+
+        read_tsc_data(&end);
+
+        if (out_delta)
+        {
+            out_delta->aperf = end.aperf - start.aperf;
+            out_delta->mperf = end.mperf - start.mperf;
+            out_delta->energy = end.energy - start.energy;
+            out_delta->msr_tsc = end.msr_tsc - start.msr_tsc;
+            out_delta->io_apicTimer = end.io_apicTimer - start.io_apicTimer;
+            out_delta->rdtsc = end.rdtsc - start.rdtsc;
+            out_delta->rdtscp = end.rdtscp - start.rdtscp;
+            out_delta->counter = cnt;
+            out_delta->pstate = MSR::PSTATE_STATUS().CurPstate;
         }
 
         return;
@@ -509,17 +495,71 @@ void run_detection()
     return;
 }
 
+void ipi_probe(TSC_DATA* output)
+{
+    ComputeUnitIdentifiers data;
+    data.AsUINT32 = CPUID::query(0x8000001E).ebx;
+
+    auto logic_core_number = CPUID::current_core_number();
+    auto core_number = data.ComputeUnitId;
+
+	auto coreid = KeGetCurrentProcessorNumberEx(nullptr);
+
+    if (data.ComputeUnitId == 0)
+    {
+        int idx = coreid % 2;
+        TSC_DATA tsc_data;
+        DTC::ProbeCounters(&tsc_data);
+		output[idx].aperf = tsc_data.aperf;
+		output[idx].mperf = tsc_data.mperf;
+		output[idx].energy = tsc_data.energy;
+		output[idx].msr_tsc = tsc_data.msr_tsc;
+		output[idx].io_apicTimer = tsc_data.io_apicTimer;
+		output[idx].rdtsc = tsc_data.rdtsc;
+		output[idx].rdtscp = tsc_data.rdtscp;
+		output[idx].counter = tsc_data.counter;
+		output[idx].pstate = tsc_data.pstate;
+    }
+
+    
+    return;
+}
+
 
 NTSTATUS DriverEntry()
 {
-	RAPLPowerUnit rapl = { .AsUINT64 = _mm_readmsr(0xC0010299) };
-	printf("Power Units: %i\n", rapl.PowerUnits);
-	printf("Energy Status Units: %i\n", rapl.EnergyStatusUnits);
-	printf("Time Units: %i\n", rapl.TimeUnits);
 
-    printf("start");
-    run_detection();
-	printf("end");
+	TSC_DATA tsc_data[2];
+    KeIpiGenericCall(ipi_probe, tsc_data);
+
+
+
+    for (int i = 0; i < 2; i++)
+    {
+        printf("%i %i %i %i %i %i %i %i %i",
+            tsc_data[i].aperf,
+            tsc_data[i].mperf,
+            tsc_data[i].energy,
+            tsc_data[i].msr_tsc,
+            tsc_data[i].io_apicTimer,
+            tsc_data[i].rdtsc,
+            tsc_data[i].rdtscp,
+            tsc_data[i].counter,
+            tsc_data[i].pstate
+        );
+    }
+
+    auto total = tsc_data[0].counter + tsc_data[1].counter;
+    
+	printf("Total Count: %i\n", total);
+
+
+
+
+
+    //printf("start");
+    //run_detection();
+	//printf("end");
 	//printf("PM: %i\n", PM());
     //for (int i = 0; i < 10; i++)
     //{
@@ -531,32 +571,31 @@ NTSTATUS DriverEntry()
     //    spin_100ms();
     //    printf("2\n");
     //}
-
     //PauseTest();
-    auto cppc = MSR::CPPC_CAPABILITY_1();
-	printf("LowestPerf: %i\n", cppc.LowestPerf);
-	printf("LowNonLinPerf: %i\n", cppc.LowNonLinPerf);
-	printf("NominalPerf: %i\n", cppc.NominalPerf);
-	printf("HighestPerf: %i\n", cppc.HighestPerf);
-	auto cur_pstate = MSR::PSTATE_STATUS().CurPstate;
-    auto pstate = MSR::PSTATE(cur_pstate);
-	printf("Current Pstate: %i -> %i\n", pstate.get_frequency_mhz(), cur_pstate);
-	printf("TscFreqSel: %i\n", MSR::HWCR().TscFreqSel);
-	printf("LockTscToCurrentP0: %i\n", MSR::HWCR().LockTscToCurrentP0);
-	printf("P(C) FID: %i\n", pstate.CpuFid);
-	printf("P(C) VID: %i\n", pstate.CpuVid);
-	printf("P(C) IddValue: %i\n", pstate.IddValue);
-	printf("P(C) IddDiv: %i\n", pstate.IddDiv);
-	printf("P(C) PstateEn: %i\n", pstate.PstateEn);
-    printf("cppc Enabled: %i\n", MSR::CPPC_ENABLE().CPPC_En);
-	auto P0 = MSR::PSTATE(0).get_frequency_mhz() * 100;
-	printf("P0: %i MHz\n", P0);
-    MSR_CPPC_REQUEST start = MSR::CPPC_REQUEST();
-    printf("base min perf: %i\n", start.MinPerf);
-    printf("base max perf: %i\n", start.MaxPerf);
-    auto start_cpy = start;
-    start_cpy.MinPerf = cppc.LowestPerf;
-	start_cpy.MaxPerf = cppc.HighestPerf;
+    //auto cppc = MSR::CPPC_CAPABILITY_1();
+	//printf("LowestPerf: %i\n", cppc.LowestPerf);
+	//printf("LowNonLinPerf: %i\n", cppc.LowNonLinPerf);
+	//printf("NominalPerf: %i\n", cppc.NominalPerf);
+	//printf("HighestPerf: %i\n", cppc.HighestPerf);
+	//auto cur_pstate = MSR::PSTATE_STATUS().CurPstate;
+    //auto pstate = MSR::PSTATE(cur_pstate);
+	//printf("Current Pstate: %i -> %i\n", pstate.get_frequency_mhz(), cur_pstate);
+	//printf("TscFreqSel: %i\n", MSR::HWCR().TscFreqSel);
+	//printf("LockTscToCurrentP0: %i\n", MSR::HWCR().LockTscToCurrentP0);
+	//printf("P(C) FID: %i\n", pstate.CpuFid);
+	//printf("P(C) VID: %i\n", pstate.CpuVid);
+	//printf("P(C) IddValue: %i\n", pstate.IddValue);
+	//printf("P(C) IddDiv: %i\n", pstate.IddDiv);
+	//printf("P(C) PstateEn: %i\n", pstate.PstateEn);
+    //printf("cppc Enabled: %i\n", MSR::CPPC_ENABLE().CPPC_En);
+	//auto P0 = MSR::PSTATE(0).get_frequency_mhz() * 100;
+	//printf("P0: %i MHz\n", P0);
+    //MSR_CPPC_REQUEST start = MSR::CPPC_REQUEST();
+    //printf("base min perf: %i\n", start.MinPerf);
+    //printf("base max perf: %i\n", start.MaxPerf);
+    //auto start_cpy = start;
+    //start_cpy.MinPerf = cppc.LowestPerf;
+	//start_cpy.MaxPerf = cppc.HighestPerf;
     //auto irql = _mm_readcr8();
     //_mm_writecr8(15);
     //
@@ -568,7 +607,6 @@ NTSTATUS DriverEntry()
     //ipi_thing();
     //
     //_mm_writecr8(irql);
-
     //auto irql = _mm_readcr8();
     //_mm_writecr8(15);
     //MSR::CPPC_REQUEST(start_cpy);
