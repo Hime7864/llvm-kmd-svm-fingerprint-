@@ -835,20 +835,23 @@ NTSTATUS DriverEntry()
     TSC_SANITY_DATA tsc_sanity{ 0 };
 	SanityCheckTsc(&tsc_sanity);
     
+	printf("Interval Desynchronization: (max:5%%)\n");
     if (tsc_sanity.is_interval_desynced())
-        printf("   [Flagged] - Interval Desynchronization: %i%%\n", (int)(tsc_sanity.interval_desync_ratio * 100.0));
+        printf("   > [Flagged] - Interval Desynchronization: %i%%\n", (int)(tsc_sanity.interval_desync_ratio * 100.0));
     else
         printf("   [Normal]");
 
+	printf("TSC Desynchronization: (max:5%%)\n");
     if(tsc_sanity.is_tsc_desynced())
-		printf("   [Flagged] - TSC Desynchronization: %i%%\n", (int)(tsc_sanity.tsc_desync_ratio * 100.0));
+		printf("   > [Flagged] - TSC Desynchronization: %i%%\n", (int)(tsc_sanity.tsc_desync_ratio * 100.0));
     else
         printf("   [Normal]");
 
+    printf("Workload Desynchronization: (max:20 cycles)\n");
     if (tsc_sanity.is_reported_cycles_missing())
     {
-        printf("   [Flagged] - Workload Desynchronization: %i\n", tsc_sanity.missing_cycles);
-        printf("               RTC Missing %i Cycles\n", (tsc_sanity.missing_cycles / tsc_sanity.reported_cycles) * tsc_sanity.rdtsc_delta_ajusted);
+        printf("   > [Flagged] - Workload Desynchronization: %i\n", tsc_sanity.missing_cycles);
+        printf("                 RTC Missing %i Cycles\n", (tsc_sanity.missing_cycles / tsc_sanity.reported_cycles) * tsc_sanity.rdtsc_delta_ajusted);
     }
     else
         printf("   [Normal]");
