@@ -16,7 +16,6 @@ UINT64 NAKED io_apic_rtc()
         and r8, 0xFF
         shl r8, 32
 
-
         mov dx, 0x80A
         out dx, ax
         mov dx, 0x809
@@ -50,160 +49,6 @@ UINT64 NAKED io_apic_rtc()
     }
 }
 
-BOOLEAN NmiCallback(
-    _In_ PVOID CallbackContext,
-    _In_ BOOLEAN IsHandled)
-{
-    auto coreid = KeGetCurrentProcessorNumberEx(nullptr);
-    printf("RTC APIC ID: %p\n", io_apic_rtc());
-    printf("tsc        : %p\n", __rdtsc());
-    for (UINT64 i = 0; i < 0x5000000; i++)
-        _mm_pause();
-    printf("RTC APIC ID: %p\n", io_apic_rtc());
-    printf("tsc        : %p\n", __rdtsc());
-    return TRUE;
-}
-
-void IpiCallback(_In_ PVOID CallbackContext)
-{
-    auto coreid = KeGetCurrentProcessorNumberEx(nullptr);
-    DbgPrintEx(0, 0, "%p\n", MSR::APERF());
-    return;
-}
-
-NTSTATUS BroadcastNmi(PVOID ctx)
-{
-    auto affinity = (_KAFFINITY_EX*)ExAllocatePool(NonPagedPool, sizeof(_KAFFINITY_EX));
-    if (!affinity)
-        return STATUS_INSUFFICIENT_RESOURCES;
-    auto handle = KeRegisterNmiCallback(NmiCallback, ctx);
-    if (!handle)
-    {
-        ExFreePoolWithTag(affinity, NMI_CB_POOL_TAG);
-        return STATUS_UNSUCCESSFUL;
-    }
-
-    memset(affinity, 0, sizeof(_KAFFINITY_EX));
-
-    auto numCores = KeQueryActiveProcessorCount(0);
-    KeInitializeAffinityEx(affinity);
-    //for (int i = 0; i < numCores; i++)
-        //KeAddProcessorAffinityEx(affinity, i);
-    KeAddProcessorAffinityEx(affinity, 1);
-    HalSendNMI(affinity);
-    Sleep(1);
-
-    KeDeregisterNmiCallback(handle);
-
-    ExFreePoolWithTag(affinity, NMI_CB_POOL_TAG);
-
-    return STATUS_SUCCESS;
-}
-
-void BroadcastIntr(PVOID ctx)
-{
-    KeIpiGenericCall(IpiCallback, ctx);
-}
-
-UINT32 NAKED tsc_io_raw()
-{
-    __asm {
-        push rdx
-
-        mov dx, 0xCD6
-        mov ax, 0x500
-        out dx, ax
-
-        mov dx, 0xCD7
-        in eax, dx
-
-        pop rdx
-        ret
-    }
-}
-
-bool read_bit(UINT64 value, int bit)
-{
-    return (value >> bit) & 1;
-}
-
-struct L3RAPLPowerUnit0
-{
-    union
-    {
-        UINT64 AsUINT64;
-        struct
-        {
-            UINT64 PowerUnits : 4;
-            UINT64 Reserved0 : 4;
-            UINT64 EnergyStatusUnits : 5;
-            UINT64 Reserved1 : 3;
-            UINT64 TimeUnits : 4;
-            UINT64 Reserved2 : 44;
-        };
-    };
-};
-
-struct RAPLPowerUnit
-{
-    union
-    {
-        UINT64 AsUINT64;
-        struct
-        {
-            UINT64 PowerUnits : 4;
-            UINT64 Reserved0 : 4;
-            UINT64 EnergyStatusUnits : 5;
-            UINT64 Reserved1 : 3;
-            UINT64 TimeUnits : 4;
-            UINT64 Reserved2 : 44;
-        };
-    };
-};
-
-
-struct CppcCapability1
-{
-    union
-    {
-        UINT64 AsUINT64;
-        struct
-        {
-            UINT64 LowestPerf : 8;
-            UINT64 LowNonLinPerf : 8;
-            UINT64 NominalPerf : 8;
-            UINT64 HighestPerf : 8;
-        };
-    };
-};
-
-struct CppcCapability2
-{
-    union
-    {
-        UINT64 AsUINT64;
-        struct
-        {
-            UINT64 MaxPerf : 8;
-        };
-    };
-};
-
-struct ExtPerfMonAndDbgEbx
-{
-    union
-    {
-        UINT32 AsUINT32;
-        struct
-        {
-            UINT32 NumPerfCtrCore : 4;
-            UINT32 LbrStackSz : 6;
-            UINT32 NumPerfCtrNB : 6;
-            UINT32 NumPerfCtrUmc : 8;
-        };
-    };
-};
-
 struct TSC_DATA
 {
     UINT64 aperf;
@@ -229,7 +74,6 @@ void read_tsc_data(TSC_DATA* data)
     data->rdtscp = _mm_rdtscp(&aux);
     _mm_lfence();
     _mm_mfence();
-    return;
 }
 
 struct ComputeUnitIdentifiers
@@ -245,288 +89,6 @@ struct ComputeUnitIdentifiers
         };
     };
 };
-
-inline void __hlt()
-{
-    __asm {
-        MWAIT
-    }
-}   
-
-namespace SingleRTC
-{
-    void rdtsc()
-    {
-        ComputeUnitIdentifiers data;
-        data.AsUINT32 = CPUID::query(0x8000001E).ebx;
-
-        auto logic_core_number = CPUID::current_core_number();
-        auto core_number = data.ComputeUnitId;
-
-        //printf("Compute Unit ID: %i Cores per Compute Unit: %i\n", data.ComputeUnitId, data.CoresPerComputeUnit);
-
-        auto P0 = MSR::PSTATE(0).get_frequency_mhz() * 1000;
-
-        int cnt = 0;
-        UINT64 watt = _mm_readmsr(0xC001029B);
-        while (watt == _mm_readmsr(0xC001029B))
-            _mm_pause();
-
-        TSC_DATA start, end;
-        read_tsc_data(&start);
-
-        watt = _mm_readmsr(0xC001029B);
-        while (watt == _mm_readmsr(0xC001029B))
-        {
-            MSR::EFER().svme;
-            cnt++;
-        }
-        
-        read_tsc_data(&end);
-
-        TSC_DATA delta;
-        delta.aperf = end.aperf - start.aperf;
-        delta.mperf = end.mperf - start.mperf;
-        delta.energy = end.energy - start.energy;
-        delta.msr_tsc = end.msr_tsc - start.msr_tsc;
-        delta.io_apicTimer = end.io_apicTimer - start.io_apicTimer;
-        delta.rdtsc = end.rdtsc - start.rdtsc;
-
-        UINT64 avg_delta = (delta.mperf + delta.msr_tsc + delta.rdtsc) / 3;
-		//printf("P0: %i MHz\n", avg_delta - P0);
-		double offset_ratio =  (double)P0 / (double)avg_delta;
-        //delta.aperf = (UINT64)(delta.aperf * offset_ratio);
-		//delta.mperf = (UINT64)(delta.mperf * offset_ratio);
-		//delta.energy = (UINT64)(delta.energy * offset_ratio);
-		//delta.msr_tsc = (UINT64)(delta.msr_tsc * offset_ratio);
-		//delta.io_apicTimer = (UINT64)(delta.io_apicTimer * offset_ratio);
-		//delta.rdtsc = (UINT64)(delta.rdtsc * offset_ratio);
-
-
-        printf("%02i %02i )a %i m %i e %i mt %i io %i tsc %i cnt %i - %i\n",
-            logic_core_number % 2, core_number, delta.aperf, delta.mperf, delta.energy, delta.msr_tsc, delta.io_apicTimer, delta.rdtsc, cnt, (UINT64)((((double)delta.mperf / (double)delta.aperf) * (double)cnt) / 1));
-
-        return;
-    }
-};
-
-bool svme_enabled()
-{
-    return MSR::EFER().svme;
-}
-
-bool dtc_pstate_shadowing()
-{
-    auto old = MSR::PSTATE_STATUS().CurPstate;
-
-    int score = 0;
-    for (int i = 0; i < 10; i++)
-    {
-        MSR_PSTATE_CONTROL cmd;
-        cmd.PstateCmd = i % 2;
-        MSR::PSTATE_CONTROL(cmd);
-        if (MSR::PSTATE_STATUS().CurPstate == i % 2)
-            score++;
-    }
-
-    auto cmd = MSR::PSTATE_CONTROL();
-    cmd.PstateCmd = old;
-    MSR::PSTATE_CONTROL(cmd);
-
-    return score > 2;
-}
-
-struct DTC
-{
-    static bool PowerStateElevation()
-    {
-		auto new_state = !MSR::PSTATE_STATUS().CurPstate;
-        MSR_PSTATE_CONTROL cmd{ 0 };
-        cmd.PstateCmd = new_state;
-        MSR::PSTATE_CONTROL(cmd);
-        MSR::EFER().svme;
-        return MSR::PSTATE_STATUS().CurPstate == new_state;
-    }
-
-    static bool PowerStateShadowing()
-    {
-        int counter = 0;
-        for (int i = 0; i < 10; i++)
-        {
-            auto data = MSR::PSTATE_CONTROL();
-            data.PstateCmd = !MSR::PSTATE_STATUS().CurPstate;
-            MSR::PSTATE_CONTROL(data);
-            if (MSR::PSTATE_STATUS().CurPstate == data.PstateCmd)
-                counter++;
-        }
-        return counter >= 5;
-	}
-
-    static void ProbeCounters(TSC_DATA* out_delta, MSR_CPPC_REQUEST cppc)
-    {
-        MSR::CPPC_REQUEST(cppc);
-
-        UINT64 unit = _mm_readmsr(0xC001029B);
-        while (unit == _mm_readmsr(0xC001029B))
-            _mm_pause();
-
-        TSC_DATA start, end;
-        read_tsc_data(&start);
-
-        int cnt = 0;
-        unit = _mm_readmsr(0xC001029B);
-        while (unit == _mm_readmsr(0xC001029B))
-        {
-            _mm_readmsr(MSR::_MSR_EFER);
-            cnt++;
-        }
-
-        read_tsc_data(&end);
-
-        if (out_delta)
-        {
-            out_delta->aperf = end.aperf - start.aperf;
-            out_delta->mperf = end.mperf - start.mperf;
-            out_delta->energy = end.energy - start.energy;
-            out_delta->msr_tsc = end.msr_tsc - start.msr_tsc;
-            out_delta->io_apicTimer = end.io_apicTimer - start.io_apicTimer;
-            out_delta->rdtsc = end.rdtsc - start.rdtsc;
-            out_delta->rdtscp = end.rdtscp - start.rdtscp;
-            out_delta->counter = cnt;
-            out_delta->pstate = MSR::PSTATE_STATUS().CurPstate;
-        }
-
-        return;
-    }
-
-    static void ProbeCounters(TSC_DATA* out_delta)
-    {
-        UINT64 unit = _mm_readmsr(0xC001029B);
-        while (unit == _mm_readmsr(0xC001029B))
-            _mm_pause();
-
-        TSC_DATA start, end;
-        read_tsc_data(&start);
-
-        int cnt = 0;
-        unit = _mm_readmsr(0xC001029B);
-        while (unit == _mm_readmsr(0xC001029B))
-        {
-            _mm_readmsr(MSR::_MSR_EFER);
-            cnt++;
-        }
-
-        read_tsc_data(&end);
-
-        if (out_delta)
-        {
-            out_delta->aperf = end.aperf - start.aperf;
-            out_delta->mperf = end.mperf - start.mperf;
-            out_delta->energy = end.energy - start.energy;
-            out_delta->msr_tsc = end.msr_tsc - start.msr_tsc;
-            out_delta->io_apicTimer = end.io_apicTimer - start.io_apicTimer;
-            out_delta->rdtsc = end.rdtsc - start.rdtsc;
-            out_delta->rdtscp = end.rdtscp - start.rdtscp;
-            out_delta->counter = cnt;
-            out_delta->pstate = MSR::PSTATE_STATUS().CurPstate;
-        }
-
-        return;
-    }
-
-    static void SanityCheckCounters()
-    {
-
-
-        // first get Min and Max performance values
-        auto cppc_backup = MSR::CPPC_REQUEST();
-        auto cppc_capability = MSR::CPPC_CAPABILITY_1();
-        auto cppc_request = cppc_backup;
-        cppc_request.MinPerf = cppc_capability.LowestPerf;
-        cppc_request.MaxPerf = cppc_capability.HighestPerf;
-        //power state 0 check
-        cppc_request.DesPerf = cppc_request.MaxPerf;
-        DTC::ProbeCounters(nullptr, cppc_request);
-        TSC_DATA tsc_data[10];
-
-        
-        for (int i = 0; i < 10; i++)
-        {
-            if (i % 2)
-                cppc_request.DesPerf = cppc_request.MinPerf;
-            else
-                cppc_request.DesPerf = cppc_request.MaxPerf;
-            DTC::ProbeCounters(&tsc_data[i], cppc_request);
-        }
-
-        //power state 1 check
-		//TSC_DATA p1_delta_min, p1_delta_max;
-        //cppc_request.DesPerf = cppc_request.MinPerf;
-        //DTC::ProbeCounters(&p1_delta_min, cppc_request, 1, true);
-        //cppc_request.DesPerf = cppc_request.MaxPerf;
-        //DTC::ProbeCounters(&p1_delta_max, cppc_request, 1, true);
-        MSR::CPPC_REQUEST(cppc_backup);
-
-        for (int i = 0; i < 10; i++)
-        {
-            printf("%i) -> a %i m %i e %i mt %i io %i tsc %i tscp %i cnt %i\n",
-                i,
-                tsc_data[i].aperf, tsc_data[i].mperf, tsc_data[i].energy, tsc_data[i].msr_tsc, tsc_data[i].io_apicTimer, tsc_data[i].rdtsc, tsc_data[i].rdtscp, tsc_data[i].counter);
-        }
-
-
-        return;
-
-    }
-};
-
-void run_detection()
-{
-    auto irql = _mm_readcr8();
-    _mm_writecr8(15);
-    
-    //if (DTC::PowerStateElevation())
-    //    printf("[Flagged] - Power State Elevation\n");
-    //if (DTC::PowerStateShadowing())
-    //    printf("[Flagged] - Power State Shadowing\n");
-
-    DTC::SanityCheckCounters();
-    _mm_writecr8(irql);
-    return;
-}
-
-void ipi_probe(TSC_DATA* output)
-{
-    ComputeUnitIdentifiers data;
-    data.AsUINT32 = CPUID::query(0x8000001E).ebx;
-
-    auto logic_core_number = CPUID::current_core_number();
-    auto core_number = data.ComputeUnitId;
-
-	auto coreid = KeGetCurrentProcessorNumberEx(nullptr);
-
-    if (data.ComputeUnitId == 0)
-    {
-        int idx = coreid % 2;
-        TSC_DATA tsc_data;
-        DTC::ProbeCounters(&tsc_data);
-		output[idx].aperf = tsc_data.aperf;
-		output[idx].mperf = tsc_data.mperf;
-		output[idx].energy = tsc_data.energy;
-		output[idx].msr_tsc = tsc_data.msr_tsc;
-		output[idx].io_apicTimer = tsc_data.io_apicTimer;
-		output[idx].rdtsc = tsc_data.rdtsc;
-		output[idx].rdtscp = tsc_data.rdtscp;
-		output[idx].counter = tsc_data.counter;
-		output[idx].pstate = tsc_data.pstate;
-    }
-
-    
-    return;
-}
-
-
-
 
 void ProbeCounters(TSC_DATA* start, TSC_DATA* end)
 {
@@ -546,7 +108,6 @@ void ProbeCounters(TSC_DATA* start, TSC_DATA* end)
     read_tsc_data(end);
     end->counter = cnt;
     start->counter = cnt;
-    return;
 }
 
 INT64 abs64(INT64 value)
@@ -556,50 +117,10 @@ INT64 abs64(INT64 value)
 
 struct RTC_CPPC_DATA
 {
-	int target_core;
+    int target_core;
     MSR_CPPC_REQUEST cppc;
     TSC_DATA logical_core_start[2];
     TSC_DATA logical_core_end[2];
-
-    UINT64 CalculateGrossJitter()
-    {
-        auto result = abs64(abs64(logical_core_start[0].rdtsc - logical_core_start[1].rdtsc) - abs64(logical_core_end[0].rdtsc - logical_core_end[1].rdtsc));
-		result += abs64(abs64(logical_core_start[0].rdtscp - logical_core_start[1].rdtscp) - abs64(logical_core_end[0].rdtscp - logical_core_end[1].rdtscp));
-        result += abs64(abs64(logical_core_start[0].msr_tsc - logical_core_start[1].msr_tsc) - abs64(logical_core_end[0].msr_tsc - logical_core_end[1].msr_tsc));
-		result += abs64(abs64(logical_core_start[0].aperf - logical_core_start[1].aperf) - abs64(logical_core_end[0].aperf - logical_core_end[1].aperf));
-		result += abs64(abs64(logical_core_start[0].mperf - logical_core_start[1].mperf) - abs64(logical_core_end[0].mperf - logical_core_end[1].mperf));
-		result += abs64(abs64(logical_core_start[0].energy - logical_core_start[1].energy) - abs64(logical_core_end[0].energy - logical_core_end[1].energy));
-		result += abs64(abs64(logical_core_start[0].io_apicTimer - logical_core_start[1].io_apicTimer) - abs64(logical_core_end[0].io_apicTimer - logical_core_end[1].io_apicTimer));
-		result += abs64(abs64(logical_core_start[0].counter - logical_core_start[1].counter) - abs64(logical_core_end[0].counter - logical_core_end[1].counter));
-	    return result;
-    }
-
-    UINT64 CalculateGrossTscDelta()
-    {
-        auto result = abs64(abs64(logical_core_end[0].rdtsc - logical_core_start[0].rdtsc) - abs64(logical_core_end[1].rdtsc - logical_core_start[1].rdtsc));
-		result += abs64(abs64(logical_core_end[0].rdtscp - logical_core_start[0].rdtscp) - abs64(logical_core_end[1].rdtscp - logical_core_start[1].rdtscp));
-		result += abs64(abs64(logical_core_end[0].msr_tsc - logical_core_start[0].msr_tsc) - abs64(logical_core_end[1].msr_tsc - logical_core_start[1].msr_tsc));
-		result += abs64(abs64(logical_core_end[0].aperf - logical_core_start[0].aperf) - abs64(logical_core_end[1].aperf - logical_core_start[1].aperf));
-        return result;
-	}
-
-    double CalculateExecutionRatio()
-    {
-		auto aperf_delta_0 = logical_core_end[0].aperf - logical_core_start[0].aperf;
-		auto aperf_delta_1 = logical_core_end[1].aperf - logical_core_start[1].aperf;
-		auto aperf = (aperf_delta_0 > aperf_delta_1) ? aperf_delta_0 : aperf_delta_1;
-
-		auto mperf_delta_0 = logical_core_end[0].mperf - logical_core_start[0].mperf;   
-		auto mperf_delta_1 = logical_core_end[1].mperf - logical_core_start[1].mperf;
-		auto mperf = (mperf_delta_0 > mperf_delta_1) ? mperf_delta_0 : mperf_delta_1;
-
-        return ((double)aperf / (double)mperf);
-    }
-
-    UINT64 CalculateWork()
-    {
-		return logical_core_end[0].counter + logical_core_end[1].counter;
-    }
 };
 
 void IpiCoreHandler(RTC_CPPC_DATA* output)
@@ -607,37 +128,33 @@ void IpiCoreHandler(RTC_CPPC_DATA* output)
     if (!output)
         return;
 
-	MSR_PSTATE_CONTROL cmd;
-    cmd.PstateCmd = 0;
-    MSR::PSTATE_CONTROL(cmd);
     ComputeUnitIdentifiers data;
     data.AsUINT32 = CPUID::query(0x8000001E).ebx;
 
-    auto logic_core_number = CPUID::current_core_number();
-    auto core_number = data.ComputeUnitId;
+    if (data.ComputeUnitId != output->target_core)
+        return;
 
     auto coreid = KeGetCurrentProcessorNumberEx(nullptr);
+    auto irql = _mm_readcr8();
+    _mm_writecr8(15);
 
-    if (data.ComputeUnitId == output->target_core)
-    {
-		auto irql = _mm_readcr8();
-		_mm_writecr8(15);
-        auto old = MSR::CPPC_REQUEST();
-        MSR::CPPC_REQUEST(output->cppc);
-        int idx = coreid % 2;
+    MSR_PSTATE_CONTROL cmd{ 0 };
+    cmd.PstateCmd = 0;
+    MSR::PSTATE_CONTROL(cmd);
 
-        ProbeCounters(&output->logical_core_start[idx], &output->logical_core_end[idx]);
+    auto old = MSR::CPPC_REQUEST();
+    MSR::CPPC_REQUEST(output->cppc);
 
-        MSR::CPPC_REQUEST(old);
-		_mm_writecr8(irql);
-    }
-    return;
+    int idx = coreid % 2;
+    ProbeCounters(&output->logical_core_start[idx], &output->logical_core_end[idx]);
+
+    MSR::CPPC_REQUEST(old);
+    _mm_writecr8(irql);
 }
 
 void ProbeCore(RTC_CPPC_DATA* output)
 {
-	KeIpiGenericCall(IpiCoreHandler, output);
-    return;
+    KeIpiGenericCall(IpiCoreHandler, output);
 }
 
 struct TSC_SANITY_DATA
@@ -649,36 +166,84 @@ struct TSC_SANITY_DATA
     UINT64 missing_cycles;
     UINT64 counter_total;
 
-    bool is_tsc_desynced()
+    bool is_tsc_desynced() const
     {
         return tsc_desync_ratio > 0.05;
-	}
+    }
 
-    bool is_interval_desynced()
+    bool is_interval_desynced() const
     {
         return interval_desync_ratio > 0.05;
-	}
+    }
 
-    bool is_reported_cycles_missing()
+    bool is_reported_cycles_missing() const
     {
         auto batch_reported_cycles = reported_cycles / counter_total;
         auto batch_expected_cycles = (reported_cycles + missing_cycles) / counter_total;
-
         return abs64(batch_reported_cycles - batch_expected_cycles) > 20;
+    }
+
+    int interval_desync_percent() const
+    {
+        auto percent = (int)(interval_desync_ratio * 100.0);
+        return (int)abs64(percent);
+    }
+
+    int tsc_desync_percent() const
+    {
+        auto percent = (int)(tsc_desync_ratio * 100.0);
+        return (int)abs64(percent);
+    }
+
+    UINT64 rtc_missing_cycles() const
+    {
+        if (!reported_cycles)
+            return 0;
+        return (missing_cycles / reported_cycles) * rdtsc_delta_ajusted;
     }
 };
 
-void ProtoSanityCheckTsc(TSC_SANITY_DATA* output)
+static void log_banner()
+{
+    printf("\n");
+    printf("========================================\n");
+    printf("  SVM TSC Fingerprint Detection\n");
+    printf("========================================\n");
+}
+
+static void log_check(const char* name, const char* threshold, bool flagged, const char* detail)
+{
+    printf("  %-30s %-9s  %s (limit: %s)\n",
+        name,
+        flagged ? "FLAGGED" : "OK",
+        detail,
+        threshold);
+}
+
+static void log_summary(bool interval_flagged, bool tsc_flagged, bool workload_flagged)
+{
+    int flagged_count = (interval_flagged ? 1 : 0) + (tsc_flagged ? 1 : 0) + (workload_flagged ? 1 : 0);
+
+    printf("----------------------------------------\n");
+    if (flagged_count == 0)
+        printf("  Result: CLEAN  (0/3 checks flagged)\n");
+    else
+        printf("  Result: FLAGGED (%i/3 checks flagged)\n", flagged_count);
+    printf("========================================\n\n");
+}
+
+void ProtoSanityCheckTsc(TSC_SANITY_DATA* output, int core_id)
 {
     if (!output)
         return;
+
     RTC_CPPC_DATA data{ 0 };
     auto cppc_capabilities = MSR::CPPC_CAPABILITY_1();
     data.cppc.MinPerf = cppc_capabilities.LowestPerf;
     data.cppc.MaxPerf = cppc_capabilities.HighestPerf;
     data.cppc.DesPerf = cppc_capabilities.NominalPerf;
+    data.target_core = core_id;
 
-    data.target_core = 0;
     ProbeCore(&data);
 
     auto mperf_delta = data.logical_core_end[0].mperf - data.logical_core_start[0].mperf;
@@ -689,12 +254,10 @@ void ProtoSanityCheckTsc(TSC_SANITY_DATA* output)
     double sync_ratio = (double)mperf_delta / (double)msr_tsc_delta;
     sync_ratio += (double)mperf_delta / (double)rdtsc_delta;
     sync_ratio += (double)mperf_delta / (double)rdtsp_delta;
-
-	output->tsc_desync_ratio = (sync_ratio / 3.0) - 1.0;
+    output->tsc_desync_ratio = (sync_ratio / 3.0) - 1.0;
 
     auto io_apic_ratio = 920000.0 / (double)(data.logical_core_end[0].io_apicTimer - data.logical_core_start[0].io_apicTimer);
     auto reported_aperf_delta = data.logical_core_end[0].aperf - data.logical_core_start[0].aperf;
-    auto reported_MHz_ratio = (double)reported_aperf_delta / (double)(data.logical_core_end[0].mperf - data.logical_core_start[0].mperf);
     auto counter_total = data.logical_core_end[0].counter + data.logical_core_end[1].counter;
 
     auto counter_total_ajusted = (UINT64)((double)counter_total * io_apic_ratio);
@@ -712,152 +275,72 @@ void ProtoSanityCheckTsc(TSC_SANITY_DATA* output)
     MHz_ratio += (double)p0_MHz / (double)rdtsp_delta_ajusted;
 
     auto MHz_ratio_total = 1.0 - (MHz_ratio / 4.0);
-
-	output->interval_desync_ratio = MHz_ratio_total;
+    output->interval_desync_ratio = MHz_ratio_total;
 
     auto reported_cycles = reported_aperf_delta_ajusted;
     auto missing_cycles = abs64((UINT64)(reported_aperf_delta_ajusted * MHz_ratio_total));
 
-    auto batch_reported_cycles = reported_cycles / counter_total_ajusted;
-    auto batch_expected_cycles = (reported_aperf_delta_ajusted + missing_cycles) / counter_total_ajusted;
-
     output->reported_cycles = reported_cycles;
-	output->missing_cycles = missing_cycles;
-	output->counter_total = counter_total_ajusted;
-
-    return;
-
+    output->missing_cycles = missing_cycles;
+    output->counter_total = counter_total_ajusted;
+    output->rdtsc_delta_ajusted = rdtsc_delta_ajusted;
 }
 
-
-void SanityCheckTsc(TSC_SANITY_DATA* output)
+void SanityCheckTsc(TSC_SANITY_DATA* output, int core_id)
 {
     TSC_SANITY_DATA sanity_data[3]{ 0 };
     for (int i = 0; i < 3; i++)
-        ProtoSanityCheckTsc(&sanity_data[i]);
+        ProtoSanityCheckTsc(&sanity_data[i], core_id);
 
     for (int i = 0; i < 3; i++)
+    {
         if (sanity_data[i].missing_cycles < output->missing_cycles || output->missing_cycles == 0)
             *output = sanity_data[i];
-    return;
+    }
 }
 
-void run_test()
+
+void RunTest(int core_id)
 {
-    RTC_CPPC_DATA data{ 0 };
-    auto cppc_capabilities = MSR::CPPC_CAPABILITY_1();
-    data.cppc.MinPerf = cppc_capabilities.LowestPerf;
-    data.cppc.MaxPerf = cppc_capabilities.HighestPerf;
-    data.cppc.DesPerf = cppc_capabilities.NominalPerf;
+    log_banner();
+    printf("  Running probes on core %i...\n\n", core_id + 1);
 
-    data.target_core = 0;
-    ProbeCore(&data);
+    TSC_SANITY_DATA tsc_sanity{ 0 };
+    SanityCheckTsc(&tsc_sanity, core_id);
 
-	auto mperf_delta = data.logical_core_end[0].mperf - data.logical_core_start[0].mperf;
-	auto msr_tsc_delta = data.logical_core_end[0].msr_tsc - data.logical_core_start[0].msr_tsc;
-	auto rdtsc_delta = data.logical_core_end[0].rdtsc - data.logical_core_start[0].rdtsc;
-	auto rdtsp_delta = data.logical_core_end[0].rdtscp - data.logical_core_start[0].rdtscp;
+    char detail[128];
 
-    double sync_ratio = (double)mperf_delta / (double)msr_tsc_delta;
-	sync_ratio += (double)mperf_delta / (double)rdtsc_delta;
-	sync_ratio += (double)mperf_delta / (double)rdtsp_delta;
-    int sync_ratio_total = abs64(100 - (int)((sync_ratio * 100.0) / 3.0));
+    auto interval_flagged = tsc_sanity.is_interval_desynced();
+    sprintf(detail, "%i%% desync", tsc_sanity.interval_desync_percent());
+    log_check("Interval desynchronization", "5%", interval_flagged, detail);
 
+    auto tsc_flagged = tsc_sanity.is_tsc_desynced();
+    sprintf(detail, "%i%% desync", tsc_sanity.tsc_desync_percent());
+    log_check("TSC desynchronization", "5%", tsc_flagged, detail);
 
-	printf("TSC Desynchronization Threashold: 5%%\n");
-    if (sync_ratio_total > 5)
+    auto workload_flagged = tsc_sanity.is_reported_cycles_missing();
+    if (workload_flagged)
     {
-        printf("   [Flagged] - desync: %i%%\n", sync_ratio_total);
-        printf("               mperf rdtsc rdtscp msr_tsc : not synced\n");
+        sprintf(detail, "%llu missing cycles, ~%llu RTC cycles",
+            tsc_sanity.missing_cycles,
+            tsc_sanity.rtc_missing_cycles());
     }
     else
     {
-		printf("   [Normal] - desync: %i%%\n", sync_ratio_total);
+        auto batch_reported_cycles = tsc_sanity.reported_cycles / tsc_sanity.counter_total;
+        auto batch_expected_cycles = (tsc_sanity.reported_cycles + tsc_sanity.missing_cycles) / tsc_sanity.counter_total;
+        sprintf(detail, "%llu cycles unaccounted for", abs64(batch_reported_cycles - batch_expected_cycles));
     }
+    log_check("Workload desynchronization", "20 cycles", workload_flagged, detail);
 
-	auto io_apic_ratio = 920000.0 / (double)(data.logical_core_end[0].io_apicTimer - data.logical_core_start[0].io_apicTimer);
-	auto reported_aperf_delta = data.logical_core_end[0].aperf - data.logical_core_start[0].aperf;
-    auto reported_MHz_ratio = (double)reported_aperf_delta / (double)(data.logical_core_end[0].mperf - data.logical_core_start[0].mperf);
-	auto counter_total = data.logical_core_end[0].counter + data.logical_core_end[1].counter;
-
-	auto counter_total_ajusted = (UINT64)((double)counter_total * io_apic_ratio);
-    auto mperf_delta_ajusted = (UINT64)((double)mperf_delta * io_apic_ratio);
-    auto msr_tsc_delta_ajusted = (UINT64)((double)msr_tsc_delta * io_apic_ratio);
-    auto rdtsc_delta_ajusted = (UINT64)((double)rdtsc_delta * io_apic_ratio);
-    auto rdtsp_delta_ajusted = (UINT64)((double)rdtsp_delta * io_apic_ratio);
-    auto reported_aperf_delta_ajusted = (UINT64)((double)reported_aperf_delta * io_apic_ratio);
-
-	auto p0_MHz = MSR::PSTATE(0).get_frequency_mhz() * 1000;
-
-    double MHz_ratio = (double)p0_MHz / (double)mperf_delta_ajusted;
-    MHz_ratio += (double)p0_MHz / (double)msr_tsc_delta_ajusted;
-    MHz_ratio += (double)p0_MHz / (double)rdtsc_delta_ajusted;
-    MHz_ratio += (double)p0_MHz / (double)rdtsp_delta_ajusted;
-
-    auto MHz_ratio_total = 1.0 - (MHz_ratio / 4.0);
-    auto reported_MHz_ratio_total = abs64((int)(MHz_ratio_total * 100.0));
-
-	printf("P0 MHz Ratio Threashold: 5%%\n");
-    if(reported_MHz_ratio_total > 5)
-    {
-        printf("   [Flagged] - desync: %i%%\n", reported_MHz_ratio_total);
-    }
-    else
-    {
-        printf("   [Normal] - desync: %i%%\n", reported_MHz_ratio_total);
-    }
-
-	auto reported_cycles = reported_aperf_delta_ajusted;
-	auto missing_cycles = (UINT64)(reported_aperf_delta_ajusted * MHz_ratio_total);
-
-
-	auto batch_reported_cycles = reported_cycles / counter_total_ajusted;
-	auto batch_expected_cycles = (reported_aperf_delta_ajusted + missing_cycles) / counter_total_ajusted;
-    
-	printf("Workload Threashold: 20");
-    if(abs64(batch_reported_cycles - batch_expected_cycles) > 20)
-    {
-        printf("   [Flagged] - cycles unaccounted for: %i\n", missing_cycles);
-        printf("              Reported %i\n", batch_reported_cycles);
-        printf("              Expected %i\n", batch_expected_cycles);
-    }
-    else
-    {
-        printf("   [Normal] - desync: %i%%\n", (int)((abs64(batch_reported_cycles - batch_expected_cycles) * 100) / batch_expected_cycles));
-	}
-    
+    log_summary(interval_flagged, tsc_flagged, workload_flagged);
     return;
 }
 
 NTSTATUS DriverEntry()
 {
-	printf("Starting detection...\n");
-    TSC_SANITY_DATA tsc_sanity{ 0 };
-	SanityCheckTsc(&tsc_sanity);
-    
-	printf("Interval Desynchronization: (max:5%%)\n");
-    if (tsc_sanity.is_interval_desynced())
-        printf("   > [Flagged] - Interval Desynchronization: %i%%\n", (int)(tsc_sanity.interval_desync_ratio * 100.0));
-    else
-        printf("   [Normal]");
-
-	printf("TSC Desynchronization: (max:5%%)\n");
-    if(tsc_sanity.is_tsc_desynced())
-		printf("   > [Flagged] - TSC Desynchronization: %i%%\n", (int)(tsc_sanity.tsc_desync_ratio * 100.0));
-    else
-        printf("   [Normal]");
-
-    printf("Workload Desynchronization: (max:20 cycles)\n");
-    if (tsc_sanity.is_reported_cycles_missing())
-    {
-        printf("   > [Flagged] - Workload Desynchronization: %i\n", tsc_sanity.missing_cycles);
-        printf("                 RTC Missing %i Cycles\n", (tsc_sanity.missing_cycles / tsc_sanity.reported_cycles) * tsc_sanity.rdtsc_delta_ajusted);
-    }
-    else
-        printf("   [Normal]");
-
-	printf("Detection complete.\n");
-
-
+	auto core_count = KeGetCurrentProcessorNumberEx(0) / 2;
+    for(int i = 0; i < core_count; i++)
+        RunTest(i);
     return STATUS_SUCCESS;
 }
