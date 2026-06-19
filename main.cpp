@@ -692,8 +692,6 @@ void run_test()
     MHz_ratio += (double)p0_MHz / (double)rdtsc_delta_ajusted;
     MHz_ratio += (double)p0_MHz / (double)rdtsp_delta_ajusted;
 
-    printf("TEST %i\n", (int)(MHz_ratio * 100));
-
     auto MHz_ratio_total = 1.0 - (MHz_ratio / 4.0);
     auto reported_MHz_ratio_total = abs64((int)(MHz_ratio_total * 100.0));
 
@@ -731,6 +729,7 @@ void run_test()
 
 NTSTATUS DriverEntry()
 {
+	printf("Starting detection...\n");
     run_test();
     return STATUS_SUCCESS;
 }
