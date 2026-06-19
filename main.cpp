@@ -694,8 +694,8 @@ void run_test()
 
     printf("TEST %i\n", (int)(MHz_ratio * 100));
 
-    int MHz_ratio_total = 1.0 - (MHz_ratio / 4.0);
-	int reported_MHz_ratio_total = abs64((int)(MHz_ratio_total * 100.0));
+    auto MHz_ratio_total = 1.0 - (MHz_ratio / 4.0);
+    auto reported_MHz_ratio_total = abs64((int)(MHz_ratio_total * 100.0));
 
 	printf("P0 MHz Ratio Threashold: 5%%\n");
     if(reported_MHz_ratio_total > 5)
