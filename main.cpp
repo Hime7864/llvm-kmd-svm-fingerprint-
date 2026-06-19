@@ -543,9 +543,15 @@ void ProbeCounters(TSC_DATA* start, TSC_DATA* end)
         _mm_readmsr(MSR::_MSR_EFER);
         cnt++;
     }
-
     read_tsc_data(end);
+    end->counter = cnt;
+    start->counter = cnt;
     return;
+}
+
+INT64 abs64(INT64 value)
+{
+    return (value < 0) ? -value : value;
 }
 
 struct RTC_CPPC_DATA
@@ -554,6 +560,28 @@ struct RTC_CPPC_DATA
     MSR_CPPC_REQUEST cppc;
     TSC_DATA logical_core_start[2];
     TSC_DATA logical_core_end[2];
+
+    UINT64 CalculateGrossJitter()
+    {
+        auto result = abs64(abs64(logical_core_start[0].rdtsc - logical_core_start[1].rdtsc) - abs64(logical_core_end[0].rdtsc - logical_core_end[1].rdtsc));
+		result += abs64(abs64(logical_core_start[0].rdtscp - logical_core_start[1].rdtscp) - abs64(logical_core_end[0].rdtscp - logical_core_end[1].rdtscp));
+        result += abs64(abs64(logical_core_start[0].msr_tsc - logical_core_start[1].msr_tsc) - abs64(logical_core_end[0].msr_tsc - logical_core_end[1].msr_tsc));
+		result += abs64(abs64(logical_core_start[0].aperf - logical_core_start[1].aperf) - abs64(logical_core_end[0].aperf - logical_core_end[1].aperf));
+		result += abs64(abs64(logical_core_start[0].mperf - logical_core_start[1].mperf) - abs64(logical_core_end[0].mperf - logical_core_end[1].mperf));
+		result += abs64(abs64(logical_core_start[0].energy - logical_core_start[1].energy) - abs64(logical_core_end[0].energy - logical_core_end[1].energy));
+		result += abs64(abs64(logical_core_start[0].io_apicTimer - logical_core_start[1].io_apicTimer) - abs64(logical_core_end[0].io_apicTimer - logical_core_end[1].io_apicTimer));
+		result += abs64(abs64(logical_core_start[0].counter - logical_core_start[1].counter) - abs64(logical_core_end[0].counter - logical_core_end[1].counter));
+	    return result;
+    }
+
+    UINT64 CalculateGrossTscDelta()
+    {
+        auto result = abs64(abs64(logical_core_end[0].rdtsc - logical_core_start[0].rdtsc) - abs64(logical_core_end[1].rdtsc - logical_core_start[1].rdtsc));
+		result += abs64(abs64(logical_core_end[0].rdtscp - logical_core_start[0].rdtscp) - abs64(logical_core_end[1].rdtscp - logical_core_start[1].rdtscp));
+		result += abs64(abs64(logical_core_end[0].msr_tsc - logical_core_start[0].msr_tsc) - abs64(logical_core_end[1].msr_tsc - logical_core_start[1].msr_tsc));
+		result += abs64(abs64(logical_core_end[0].aperf - logical_core_start[0].aperf) - abs64(logical_core_end[1].aperf - logical_core_start[1].aperf));
+        return result;
+	}
 };
 
 void IpiCoreHandler(RTC_CPPC_DATA* output)
@@ -591,11 +619,6 @@ void ProbeCore(RTC_CPPC_DATA* output)
     return;
 }
 
-INT64 abs64(INT64 value)
-{
-    return (value < 0) ? -value : value;
-}
-
 NTSTATUS DriverEntry()
 {
     RTC_CPPC_DATA data{ 0 };
@@ -606,8 +629,15 @@ NTSTATUS DriverEntry()
 	data.cppc.DesPerf = cppc_capabilities.HighestPerf;
     data.target_core = 0;
 
-    ProbeCore(&data);
-   
+    for (int i = 0; i < 10;i++)
+    {
+        ProbeCore(&data);
+        auto jitter = data.CalculateGrossJitter();
+        auto tsc_delta = data.CalculateGrossTscDelta();
+        printf("Core %i Gross Jitter: %i %i\n", data.target_core, jitter, tsc_delta);
+    }
+    
+
     printf("Core %i Logical Core 0 -> a %i m %i e %i mt %i io %i tsc %i tscp %i\n",
         data.target_core,
         data.logical_core_end[0].aperf - data.logical_core_start[0].aperf,
@@ -617,7 +647,7 @@ NTSTATUS DriverEntry()
         data.logical_core_end[0].io_apicTimer - data.logical_core_start[0].io_apicTimer,
         data.logical_core_end[0].rdtsc - data.logical_core_start[0].rdtsc,
         data.logical_core_end[0].rdtscp - data.logical_core_start[0].rdtscp);
-
+    
     printf("Core %i Logical Core 1 -> a %i m %i e %i mt %i io %i tsc %i tscp %i\n",
         data.target_core,
         data.logical_core_end[1].aperf - data.logical_core_start[1].aperf,
@@ -627,7 +657,7 @@ NTSTATUS DriverEntry()
         data.logical_core_end[1].io_apicTimer - data.logical_core_start[1].io_apicTimer,
         data.logical_core_end[1].rdtsc - data.logical_core_start[1].rdtsc,
 		data.logical_core_end[1].rdtscp - data.logical_core_start[1].rdtscp);
-
+    
     printf("Core %i Logical rdtsc start %i end %i : %i jitter\n",
         data.target_core,
         data.logical_core_start[0].rdtsc - data.logical_core_start[1].rdtsc,
