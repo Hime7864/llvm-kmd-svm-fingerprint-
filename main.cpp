@@ -526,6 +526,43 @@ void ipi_probe(TSC_DATA* output)
 }
 
 
+
+
+void ProbeCounters(TSC_DATA* out_delta)
+{
+    UINT64 unit = _mm_readmsr(0xC001029B);
+    while (unit == _mm_readmsr(0xC001029B))
+        _mm_pause();
+
+    TSC_DATA start, end;
+    read_tsc_data(&start);
+
+    int cnt = 0;
+    unit = _mm_readmsr(0xC001029B);
+    while (unit == _mm_readmsr(0xC001029B))
+    {
+        _mm_readmsr(MSR::_MSR_EFER);
+        cnt++;
+    }
+
+    read_tsc_data(&end);
+
+    if (out_delta)
+    {
+        out_delta->aperf = end.aperf - start.aperf;
+        out_delta->mperf = end.mperf - start.mperf;
+        out_delta->energy = end.energy - start.energy;
+        out_delta->msr_tsc = end.msr_tsc - start.msr_tsc;
+        out_delta->io_apicTimer = end.io_apicTimer - start.io_apicTimer;
+        out_delta->rdtsc = end.rdtsc - start.rdtsc;
+        out_delta->rdtscp = end.rdtscp - start.rdtscp;
+        out_delta->counter = cnt;
+        out_delta->pstate = MSR::PSTATE_STATUS().CurPstate;
+    }
+
+    return;
+}
+
 struct RTC_CPPC_DATA
 {
 	int target_core;
@@ -533,7 +570,7 @@ struct RTC_CPPC_DATA
 	TSC_DATA logical_core[2];
 };
 
-void ipi_core_handler(RTC_CPPC_DATA* output)
+void IpiCoreHandler(RTC_CPPC_DATA* output)
 {
     if (!output)
         return;
@@ -552,7 +589,7 @@ void ipi_core_handler(RTC_CPPC_DATA* output)
 
         int idx = coreid % 2;
         TSC_DATA tsc_data;
-        DTC::ProbeCounters(&tsc_data);
+        ProbeCounters(&tsc_data);
         output->logical_core[idx].aperf = tsc_data.aperf;
         output->logical_core[idx].mperf = tsc_data.mperf;
         output->logical_core[idx].energy = tsc_data.energy;
@@ -568,16 +605,27 @@ void ipi_core_handler(RTC_CPPC_DATA* output)
     return;
 }
 
-void ipi_core(int coreid, RTC_CPPC_DATA* output)
+void ProbeCore(RTC_CPPC_DATA* output)
 {
-	KeIpiGenericCall(ipi_core_handler, output);
+	KeIpiGenericCall(IpiCoreHandler, output);
     return;
 }
 
 NTSTATUS DriverEntry()
 {
-    RTC_CPPC_DATA data{0};
-    ipi_core(0, &data);
+    RTC_CPPC_DATA data{ 0 };
+    auto cppc_capabilities = MSR::CPPC_CAPABILITY_1();
+	data.cppc.MinPerf = cppc_capabilities.LowestPerf;
+	data.cppc.MaxPerf = cppc_capabilities.HighestPerf;
+	data.cppc.DesPerf = cppc_capabilities.NominalPerf;
+    data.target_core = 0;
+    ProbeCore(&data);
+
+    printf("Core %i) Pstate: %i -> a %i m %i e %i mt %i io %i tsc %i tscp %i cnt %i\n",
+		data.target_core, data.logical_core[0].pstate, data.logical_core[0].aperf, data.logical_core[0].mperf, data.logical_core[0].energy, data.logical_core[0].msr_tsc, data.logical_core[0].io_apicTimer, data.logical_core[0].rdtsc, data.logical_core[0].rdtscp, data.logical_core[0].counter);
+	printf("Core %i) Pstate: %i -> a %i m %i e %i mt %i io %i tsc %i tscp %i cnt %i\n",
+		data.target_core, data.logical_core[1].pstate, data.logical_core[1].aperf, data.logical_core[1].mperf, data.logical_core[1].energy, data.logical_core[1].msr_tsc, data.logical_core[1].io_apicTimer, data.logical_core[1].rdtsc, data.logical_core[1].rdtscp, data.logical_core[1].counter);
+
 
 
 
