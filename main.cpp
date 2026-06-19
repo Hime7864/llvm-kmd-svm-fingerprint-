@@ -648,10 +648,8 @@ void run_test()
     data.cppc.MaxPerf = cppc_capabilities.HighestPerf;
     data.cppc.DesPerf = cppc_capabilities.NominalPerf;
 
-    printf(".");
     data.target_core = 0;
     ProbeCore(&data);
-    printf(".");
 
 	auto mperf_delta = data.logical_core_end[0].mperf - data.logical_core_start[0].mperf;
 	auto msr_tsc_delta = data.logical_core_end[0].msr_tsc - data.logical_core_start[0].msr_tsc;
@@ -693,14 +691,31 @@ void run_test()
     MHz_ratio += (double)p0_MHz / (double)msr_tsc_delta_ajusted;
     MHz_ratio += (double)p0_MHz / (double)rdtsc_delta_ajusted;
     MHz_ratio += (double)p0_MHz / (double)rdtsp_delta_ajusted;
-    int MHz_ratio_total = MHz_ratio / 4.0;
-	int reported_MHz_ratio_total = abs64(100.0 - (int)(MHz_ratio_total * 100.0));
 
+    printf("TEST %i\n", (int)(MHz_ratio * 100));
 
-    printf("reported_MHz desync %i%%\n", reported_MHz_ratio_total);
-    printf("counter_total %i\n", reported_aperf_delta_ajusted / counter_total);
-    printf("counter_total_ajusted %i\n", reported_aperf_delta_ajusted / counter_total_ajusted);
-	
+    int MHz_ratio_total = 1.0 - (MHz_ratio / 4.0);
+	int reported_MHz_ratio_total = abs64((int)(MHz_ratio_total * 100.0));
+
+	printf("P0 MHz Ratio Threashold: 5%%\n");
+    if(reported_MHz_ratio_total > 5)
+    {
+        printf("   [Flagged] - desync: %i%%\n", reported_MHz_ratio_total);
+    }
+    else
+    {
+        printf("   [Normal] - desync: %i%%\n", reported_MHz_ratio_total);
+    }
+
+	auto reported_cycles = reported_aperf_delta_ajusted;
+	auto missing_cycles = (UINT64)(reported_aperf_delta_ajusted * MHz_ratio_total);
+
+    printf("Reported cycles per batch: %i\n", reported_cycles / counter_total_ajusted);
+    printf("Expected cycles per batch: %i\n", ((reported_aperf_delta_ajusted + missing_cycles) / counter_total_ajusted));
+
+	printf("cycles unaccounted for: %i\n", missing_cycles);
+
+    
     return;
 }
 
