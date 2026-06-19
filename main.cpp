@@ -666,7 +666,7 @@ void run_test()
     if (sync_ratio_total > 5)
     {
         printf("   [Flagged] - desync: %i%%\n", sync_ratio_total);
-        printf("      * mperf rdtsc rdtscp msr_tsc : not synced\n");
+        printf("               mperf rdtsc rdtscp msr_tsc : not synced\n");
     }
     else
     {
@@ -710,11 +710,21 @@ void run_test()
 	auto reported_cycles = reported_aperf_delta_ajusted;
 	auto missing_cycles = (UINT64)(reported_aperf_delta_ajusted * MHz_ratio_total);
 
-    printf("Reported cycles per batch: %i\n", reported_cycles / counter_total_ajusted);
-    printf("Expected cycles per batch: %i\n", ((reported_aperf_delta_ajusted + missing_cycles) / counter_total_ajusted));
 
-	printf("cycles unaccounted for: %i\n", missing_cycles);
-
+	auto batch_reported_cycles = reported_cycles / counter_total_ajusted;
+	auto batch_expected_cycles = (reported_aperf_delta_ajusted + missing_cycles) / counter_total_ajusted;
+    
+	printf("Workload Threashold: 20");
+    if(abs64(batch_reported_cycles - batch_expected_cycles) > 20)
+    {
+        printf("   [Flagged] - cycles unaccounted for: %i\n", missing_cycles);
+        printf("              Reported %i\n", batch_reported_cycles);
+        printf("              Expected %i\n", batch_expected_cycles);
+    }
+    else
+    {
+        printf("   [Normal] - desync: %i%%\n", (int)((abs64(batch_reported_cycles - batch_expected_cycles) * 100) / batch_expected_cycles));
+	}
     
     return;
 }
