@@ -646,7 +646,7 @@ void run_test()
     auto cppc_capabilities = MSR::CPPC_CAPABILITY_1();
     data.cppc.MinPerf = cppc_capabilities.LowestPerf;
     data.cppc.MaxPerf = cppc_capabilities.HighestPerf;
-    data.cppc.DesPerf = cppc_capabilities.LowestPerf;
+    data.cppc.DesPerf = cppc_capabilities.HighestPerf;
 
     data.target_core = 0;
     ProbeCore(&data);
@@ -674,8 +674,11 @@ void run_test()
 		printf("   [Normal] - desync: %i%%\n", sync_ratio_total);
     }
 
-	auto io_apic_ratio = (double)(data.logical_core_end[0].io_apicTimer - data.logical_core_start[0].io_apicTimer) / 920000.0;
+	auto io_apic_ratio = 920000.0 / (double)(data.logical_core_end[0].io_apicTimer - data.logical_core_start[0].io_apicTimer);
+	auto reported_MHz_ratio = (double)(data.logical_core_end[0].aperf - data.logical_core_start[0].aperf) / (double)(data.logical_core_end[0].mperf - data.logical_core_start[0].mperf);
+	auto counter_total = data.logical_core_end[0].counter + data.logical_core_end[1].counter;
 
+	auto counter_total_ajusted = (UINT64)((double)counter_total * io_apic_ratio);
     auto mperf_delta_ajusted = (UINT64)((double)mperf_delta * io_apic_ratio);
     auto msr_tsc_delta_ajusted = (UINT64)((double)msr_tsc_delta * io_apic_ratio);
     auto rdtsc_delta_ajusted = (UINT64)((double)rdtsc_delta * io_apic_ratio);
@@ -683,13 +686,20 @@ void run_test()
 
 	auto p0_MHz = MSR::PSTATE(0).get_frequency_mhz() * 1000;
 
-    double MHz_ratio = (double)p0_MHz / (double)mperf_delta;
-    MHz_ratio += (double)p0_MHz / (double)msr_tsc_delta;
-    MHz_ratio += (double)p0_MHz / (double)rdtsc_delta;
-    MHz_ratio += (double)p0_MHz / (double)rdtsp_delta;
+    double MHz_ratio = (double)p0_MHz / (double)mperf_delta_ajusted;
+    MHz_ratio += (double)p0_MHz / (double)msr_tsc_delta_ajusted;
+    MHz_ratio += (double)p0_MHz / (double)rdtsc_delta_ajusted;
+    MHz_ratio += (double)p0_MHz / (double)rdtsp_delta_ajusted;
     int MHz_ratio_total = abs64(100 - (int)((MHz_ratio * 100.0) / 4.0));
-    printf("MHz_ratio_total %i%%\n", MHz_ratio_total);
 
+	auto MHz_norm_ratio = (1.0 / reported_MHz_ratio);
+
+    auto counter_total_ajusted_norm = (UINT64)((double)counter_total_ajusted * MHz_norm_ratio);
+
+	int reported_MHz_ratio_total = (int)(MHz_norm_ratio * 100.0);
+    printf("MHz_ratio_total %i%%\n", MHz_ratio_total);
+	printf("counter_total_ajusted %i\n", counter_total_ajusted_norm);
+	printf("reported_MHz_ratio_total %i%%\n", reported_MHz_ratio_total);
     return;
 }
 
