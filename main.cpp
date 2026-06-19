@@ -339,8 +339,6 @@ void RunTest(int core_id)
 
 NTSTATUS DriverEntry()
 {
-	auto core_count = KeGetCurrentProcessorNumberEx(0) / 2;
-    for(int i = 0; i < core_count; i++)
-        RunTest(i);
+    RunTest(0);
     return STATUS_SUCCESS;
 }
