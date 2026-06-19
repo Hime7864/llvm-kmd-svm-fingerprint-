@@ -649,39 +649,46 @@ void run_test()
     data.cppc.DesPerf = cppc_capabilities.LowestPerf;
 
     data.target_core = 0;
-
     ProbeCore(&data);
 
-    auto max_jitter = data.CalculateGrossJitter();
-    auto max_tsc_delta = data.CalculateGrossTscDelta();
-    auto max_execution = data.CalculateExecutionRatio();
-	auto max_work = data.CalculateWork();
 
-	printf("Max Jitter:%08i | Max P-Delta:%08i | Max Execution:%i%% | Max Work %i %i:%i\n", max_jitter, max_tsc_delta, (int)(max_execution * 100.0), max_work, data.logical_core_end[0].counter, data.logical_core_end[1].counter);
+	auto mperf_delta = data.logical_core_end[0].mperf - data.logical_core_start[0].mperf;
+	auto msr_tsc_delta = data.logical_core_end[0].msr_tsc - data.logical_core_start[0].msr_tsc;
+	auto rdtsc_delta = data.logical_core_end[0].rdtsc - data.logical_core_start[0].rdtsc;
+	auto rdtsp_delta = data.logical_core_end[0].rdtscp - data.logical_core_start[0].rdtscp;
 
-    data.cppc.MinPerf = cppc_capabilities.LowestPerf;
-    data.cppc.MaxPerf = cppc_capabilities.HighestPerf;
-    data.cppc.DesPerf = cppc_capabilities.LowestPerf;
+    double sync_ratio = (double)mperf_delta / (double)msr_tsc_delta;
+	sync_ratio += (double)mperf_delta / (double)rdtsc_delta;
+	sync_ratio += (double)mperf_delta / (double)rdtsp_delta;
+    int sync_ratio_total = abs64(100 - (int)((sync_ratio * 100.0) / 3.0));
 
-    ProbeCore(&data);
 
-    auto min_jitter = data.CalculateGrossJitter();
-    auto min_tsc_delta = data.CalculateGrossTscDelta();
-    auto min_execution = data.CalculateExecutionRatio();
-	auto min_work = data.CalculateWork();
+	printf("TSC Desynchronization Threashold: 5%%\n");
+    if (sync_ratio_total > 5)
+    {
+        printf("   [Flagged] - desync: %i%%\n", sync_ratio_total);
+        printf("      * mperf rdtsc rdtscp msr_tsc : not synced\n");
+    }
+    else
+    {
+		printf("   [Normal] - desync: %i%%\n", sync_ratio_total);
+    }
 
-	printf("Min Jitter:%08i | Min P-Delta:%08i | Min Execution:%i%% | Min Work %i %i:%i\n", min_jitter, min_tsc_delta, (int)(min_execution * 100.0), min_work, data.logical_core_end[0].counter, data.logical_core_end[1].counter);
+	auto io_apic_ratio = (double)(data.logical_core_end[0].io_apicTimer - data.logical_core_start[0].io_apicTimer) / 920000.0;
 
-    //ProbeCore(&data);
-    //
-    //min_jitter = data.CalculateGrossJitter();
-    //min_tsc_delta = data.CalculateGrossTscDelta();
-    //min_execution = data.CalculateExecutionRatio();
-    //min_work = data.CalculateWork();
-    //
-    //printf("Min Jitter:%08i | Min P-Delta:%08i | Min Execution:%i%% | Min Work %i\n", min_jitter, min_tsc_delta, (int)(min_execution * 100.0), min_work);
+    auto mperf_delta_ajusted = (UINT64)((double)mperf_delta * io_apic_ratio);
+    auto msr_tsc_delta_ajusted = (UINT64)((double)msr_tsc_delta * io_apic_ratio);
+    auto rdtsc_delta_ajusted = (UINT64)((double)rdtsc_delta * io_apic_ratio);
+    auto rdtsp_delta_ajusted = (UINT64)((double)rdtsp_delta * io_apic_ratio);
 
-    //printf("Jitter:%08i | P-Delta:%08i | Execution:%08i | Scaled MHz %i\n", jitter, tsc_delta, execution, (int)(execution * 3.75));
+	auto p0_MHz = MSR::PSTATE(0).get_frequency_mhz() * 1000;
+
+    double MHz_ratio = (double)p0_MHz / (double)mperf_delta;
+    MHz_ratio += (double)p0_MHz / (double)msr_tsc_delta;
+    MHz_ratio += (double)p0_MHz / (double)rdtsc_delta;
+    MHz_ratio += (double)p0_MHz / (double)rdtsp_delta;
+    int MHz_ratio_total = abs64(100 - (int)((MHz_ratio * 100.0) / 4.0));
+    printf("MHz_ratio_total %i%%\n", MHz_ratio_total);
 
     return;
 }
@@ -689,81 +696,5 @@ void run_test()
 NTSTATUS DriverEntry()
 {
     run_test();
-    //RTC_CPPC_DATA data{ 0 };
-    //auto cppc_capabilities = MSR::CPPC_CAPABILITY_1();
-	//data.cppc.MinPerf = cppc_capabilities.LowestPerf;
-	//data.cppc.MaxPerf = cppc_capabilities.HighestPerf;
-	////data.cppc.DesPerf = cppc_capabilities.NominalPerf;
-	//data.cppc.DesPerf = cppc_capabilities.HighestPerf;
-    //data.target_core = 0;
-    //
-    //for (int i = 0; i < 10;i++)
-    //{
-    //    ProbeCore(&data);
-    //    Sleep(100);
-    //    auto jitter = data.CalculateGrossJitter();
-    //    auto tsc_delta = data.CalculateGrossTscDelta();
-    //    auto desync = data.CalculateP0Desync();
-    //    printf("Jitter:%08i | P-Delta:%08i | Desync:%08i\n", jitter, tsc_delta, desync);
-    //}
-    //
-    //
-    //printf("Core %i Logical Core 0 -> a %i m %i e %i mt %i io %i tsc %i tscp %i\n",
-    //    data.target_core,
-    //    data.logical_core_end[0].aperf - data.logical_core_start[0].aperf,
-    //    data.logical_core_end[0].mperf - data.logical_core_start[0].mperf,
-    //    data.logical_core_end[0].energy - data.logical_core_start[0].energy,
-    //    data.logical_core_end[0].msr_tsc - data.logical_core_start[0].msr_tsc,
-    //    data.logical_core_end[0].io_apicTimer - data.logical_core_start[0].io_apicTimer,
-    //    data.logical_core_end[0].rdtsc - data.logical_core_start[0].rdtsc,
-    //    data.logical_core_end[0].rdtscp - data.logical_core_start[0].rdtscp);
-    //
-    //printf("Core %i Logical Core 1 -> a %i m %i e %i mt %i io %i tsc %i tscp %i\n",
-    //    data.target_core,
-    //    data.logical_core_end[1].aperf - data.logical_core_start[1].aperf,
-    //    data.logical_core_end[1].mperf - data.logical_core_start[1].mperf,
-    //    data.logical_core_end[1].energy - data.logical_core_start[1].energy,
-    //    data.logical_core_end[1].msr_tsc - data.logical_core_start[1].msr_tsc,
-    //    data.logical_core_end[1].io_apicTimer - data.logical_core_start[1].io_apicTimer,
-    //    data.logical_core_end[1].rdtsc - data.logical_core_start[1].rdtsc,
-	//	data.logical_core_end[1].rdtscp - data.logical_core_start[1].rdtscp);
-    //
-    //printf("Core %i Logical rdtsc start %i end %i : %i jitter\n",
-    //    data.target_core,
-    //    data.logical_core_start[0].rdtsc - data.logical_core_start[1].rdtsc,
-    //    data.logical_core_end[0].rdtsc - data.logical_core_end[1].rdtsc,
-    //    abs64(abs64(data.logical_core_start[0].rdtsc - data.logical_core_start[1].rdtsc) - abs64(data.logical_core_end[0].rdtsc - data.logical_core_end[1].rdtsc))
-    //);
-    //printf("Core %i Logical rdtscp start %i end %i : %i jitter\n",
-    //    data.target_core,
-    //    data.logical_core_start[0].rdtscp - data.logical_core_start[1].rdtscp,
-	//	data.logical_core_end[0].rdtscp - data.logical_core_end[1].rdtscp,
-    //    abs64(abs64(data.logical_core_start[0].rdtscp - data.logical_core_start[1].rdtscp) - abs64(data.logical_core_end[0].rdtscp - data.logical_core_end[1].rdtscp))
-    //);
-    //printf("Core %i Logical msr_tsc start %i end %i : %i jitter\n",
-    //    data.target_core,
-	//	data.logical_core_start[0].msr_tsc - data.logical_core_start[1].msr_tsc,
-	//	data.logical_core_end[0].msr_tsc - data.logical_core_end[1].msr_tsc,
-    //    abs64(abs64(data.logical_core_start[0].msr_tsc - data.logical_core_start[1].msr_tsc) - abs64(data.logical_core_end[0].msr_tsc - data.logical_core_end[1].msr_tsc))
-    //);
-    //printf("Core %i Logical mperf start %i end %i : %i jitter\n",
-    //    data.target_core,
-    //    data.logical_core_start[0].mperf - data.logical_core_start[1].mperf,
-	//	data.logical_core_end[0].mperf - data.logical_core_end[1].mperf,
-	//	abs64(abs64(data.logical_core_start[0].mperf - data.logical_core_start[1].mperf) - abs64(data.logical_core_end[0].mperf - data.logical_core_end[1].mperf))
-    //);
-    //printf("Core %i Logical aperf start %i end %i : %i jitter\n",
-    //    data.target_core,
-	//	data.logical_core_start[0].aperf - data.logical_core_start[1].aperf,
-	//	data.logical_core_end[0].aperf - data.logical_core_end[1].aperf,
-    //    abs64(abs64(data.logical_core_start[0].aperf - data.logical_core_start[1].aperf) - abs64(data.logical_core_end[0].aperf - data.logical_core_end[1].aperf))
-    //);
-    //printf("Core %i Logical io_apicTimer start %i end %i : %i jitter\n",
-	//	data.target_core,
-	//	data.logical_core_start[0].io_apicTimer - data.logical_core_start[1].io_apicTimer,
-	//	data.logical_core_end[0].io_apicTimer - data.logical_core_end[1].io_apicTimer,
-    //    abs64(abs64(data.logical_core_start[0].io_apicTimer - data.logical_core_start[1].io_apicTimer) - abs64(data.logical_core_end[0].io_apicTimer - data.logical_core_end[1].io_apicTimer))
-    //);
-    //
     return STATUS_SUCCESS;
 }
