@@ -634,26 +634,30 @@ void run_test()
     auto cppc_capabilities = MSR::CPPC_CAPABILITY_1();
     data.cppc.MinPerf = cppc_capabilities.LowestPerf;
     data.cppc.MaxPerf = cppc_capabilities.HighestPerf;
-    //data.cppc.DesPerf = cppc_capabilities.NominalPerf;
     data.cppc.DesPerf = cppc_capabilities.HighestPerf;
+
     data.target_core = 0;
 
-	UINT64 jitter = 0, tsc_delta = 0, execution = 0;
+    ProbeCore(&data);
 
-    for (int i = 0; i < 5; i++)
-    {
-        ProbeCore(&data);
-        Sleep(100);
-        jitter += data.CalculateGrossJitter();
-        tsc_delta += data.CalculateGrossTscDelta();
-        execution += data.CalculateExecutionRatio();
-    }
+    auto max_jitter = data.CalculateGrossJitter();
+    auto max_tsc_delta = data.CalculateGrossTscDelta();
+    auto max_execution = data.CalculateExecutionRatio();
 
-	jitter /= 10;
-	tsc_delta /= 10;
-    execution /= 10;
+	printf("Max Jitter:%08i | Max P-Delta:%08i | Max Execution:%08i | Scaled MHz %i\n", max_jitter, max_tsc_delta, max_execution, (int)(max_execution * 3.75));
 
-    printf("Jitter:%08i | P-Delta:%08i | Execution:%08i\n", jitter, tsc_delta, execution);
+    data.cppc.DesPerf = cppc_capabilities.LowestPerf;
+
+    ProbeCore(&data);
+
+    auto min_jitter = data.CalculateGrossJitter();
+    auto min_tsc_delta = data.CalculateGrossTscDelta();
+    auto min_execution = data.CalculateExecutionRatio();
+
+	printf("Min Jitter:%08i | Min P-Delta:%08i | Min Execution:%08i | Scaled MHz %i\n", min_jitter, min_tsc_delta, min_execution, (int)(min_execution * 3.75));
+
+    //printf("Jitter:%08i | P-Delta:%08i | Execution:%08i | Scaled MHz %i\n", jitter, tsc_delta, execution, (int)(execution * 3.75));
+
     return;
 }
 
