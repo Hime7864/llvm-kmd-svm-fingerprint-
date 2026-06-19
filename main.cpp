@@ -583,13 +583,22 @@ struct RTC_CPPC_DATA
         return result;
 	}
 
-    UINT64 CalculateExecutionRatio()
+    double CalculateExecutionRatio()
     {
 		auto aperf_delta_0 = logical_core_end[0].aperf - logical_core_start[0].aperf;
 		auto aperf_delta_1 = logical_core_end[1].aperf - logical_core_start[1].aperf;
 		auto aperf = (aperf_delta_0 > aperf_delta_1) ? aperf_delta_0 : aperf_delta_1;
-		auto cnt = logical_core_end[0].counter + logical_core_end[1].counter;
-        return aperf / cnt;
+
+		auto mperf_delta_0 = logical_core_end[0].mperf - logical_core_start[0].mperf;   
+		auto mperf_delta_1 = logical_core_end[1].mperf - logical_core_start[1].mperf;
+		auto mperf = (mperf_delta_0 > mperf_delta_1) ? mperf_delta_0 : mperf_delta_1;
+
+        return ((double)aperf / (double)mperf);
+    }
+
+    UINT64 CalculateWork()
+    {
+		return logical_core_end[0].counter + logical_core_end[1].counter;
     }
 };
 
@@ -611,6 +620,8 @@ void IpiCoreHandler(RTC_CPPC_DATA* output)
 
     if (data.ComputeUnitId == output->target_core)
     {
+		auto irql = _mm_readcr8();
+		_mm_writecr8(15);
         auto old = MSR::CPPC_REQUEST();
         MSR::CPPC_REQUEST(output->cppc);
         int idx = coreid % 2;
@@ -618,6 +629,7 @@ void IpiCoreHandler(RTC_CPPC_DATA* output)
         ProbeCounters(&output->logical_core_start[idx], &output->logical_core_end[idx]);
 
         MSR::CPPC_REQUEST(old);
+		_mm_writecr8(irql);
     }
     return;
 }
@@ -634,7 +646,7 @@ void run_test()
     auto cppc_capabilities = MSR::CPPC_CAPABILITY_1();
     data.cppc.MinPerf = cppc_capabilities.LowestPerf;
     data.cppc.MaxPerf = cppc_capabilities.HighestPerf;
-    data.cppc.DesPerf = cppc_capabilities.HighestPerf;
+    data.cppc.DesPerf = cppc_capabilities.LowestPerf;
 
     data.target_core = 0;
 
@@ -643,9 +655,12 @@ void run_test()
     auto max_jitter = data.CalculateGrossJitter();
     auto max_tsc_delta = data.CalculateGrossTscDelta();
     auto max_execution = data.CalculateExecutionRatio();
+	auto max_work = data.CalculateWork();
 
-	printf("Max Jitter:%08i | Max P-Delta:%08i | Max Execution:%08i | Scaled MHz %i\n", max_jitter, max_tsc_delta, max_execution, (int)(max_execution * 3.75));
+	printf("Max Jitter:%08i | Max P-Delta:%08i | Max Execution:%i%% | Max Work %i %i:%i\n", max_jitter, max_tsc_delta, (int)(max_execution * 100.0), max_work, data.logical_core_end[0].counter, data.logical_core_end[1].counter);
 
+    data.cppc.MinPerf = cppc_capabilities.LowestPerf;
+    data.cppc.MaxPerf = cppc_capabilities.HighestPerf;
     data.cppc.DesPerf = cppc_capabilities.LowestPerf;
 
     ProbeCore(&data);
@@ -653,8 +668,18 @@ void run_test()
     auto min_jitter = data.CalculateGrossJitter();
     auto min_tsc_delta = data.CalculateGrossTscDelta();
     auto min_execution = data.CalculateExecutionRatio();
+	auto min_work = data.CalculateWork();
 
-	printf("Min Jitter:%08i | Min P-Delta:%08i | Min Execution:%08i | Scaled MHz %i\n", min_jitter, min_tsc_delta, min_execution, (int)(min_execution * 3.75));
+	printf("Min Jitter:%08i | Min P-Delta:%08i | Min Execution:%i%% | Min Work %i %i:%i\n", min_jitter, min_tsc_delta, (int)(min_execution * 100.0), min_work, data.logical_core_end[0].counter, data.logical_core_end[1].counter);
+
+    //ProbeCore(&data);
+    //
+    //min_jitter = data.CalculateGrossJitter();
+    //min_tsc_delta = data.CalculateGrossTscDelta();
+    //min_execution = data.CalculateExecutionRatio();
+    //min_work = data.CalculateWork();
+    //
+    //printf("Min Jitter:%08i | Min P-Delta:%08i | Min Execution:%i%% | Min Work %i\n", min_jitter, min_tsc_delta, (int)(min_execution * 100.0), min_work);
 
     //printf("Jitter:%08i | P-Delta:%08i | Execution:%08i | Scaled MHz %i\n", jitter, tsc_delta, execution, (int)(execution * 3.75));
 
