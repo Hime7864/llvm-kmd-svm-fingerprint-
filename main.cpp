@@ -574,6 +574,10 @@ void IpiCoreHandler(RTC_CPPC_DATA* output)
 {
     if (!output)
         return;
+
+	MSR_PSTATE_CONTROL cmd;
+    cmd.PstateCmd = 0;
+    MSR::PSTATE_CONTROL(cmd);
     ComputeUnitIdentifiers data;
     data.AsUINT32 = CPUID::query(0x8000001E).ebx;
 
@@ -619,7 +623,10 @@ NTSTATUS DriverEntry()
 	data.cppc.MaxPerf = cppc_capabilities.HighestPerf;
 	data.cppc.DesPerf = cppc_capabilities.NominalPerf;
     data.target_core = 0;
+
+	auto pstate_start = MSR::PSTATE_STATUS().CurPstate;
     ProbeCore(&data);
+	printf("Pstate before:after : %i -> %i\n", pstate_start, MSR::PSTATE_STATUS().CurPstate);
 
     printf("Core %i) Pstate: %i -> a %i m %i e %i mt %i io %i tsc %i tscp %i cnt %i\n",
 		data.target_core, data.logical_core[0].pstate, data.logical_core[0].aperf, data.logical_core[0].mperf, data.logical_core[0].energy, data.logical_core[0].msr_tsc, data.logical_core[0].io_apicTimer, data.logical_core[0].rdtsc, data.logical_core[0].rdtscp, data.logical_core[0].counter);
@@ -627,10 +634,29 @@ NTSTATUS DriverEntry()
 		data.target_core, data.logical_core[1].pstate, data.logical_core[1].aperf, data.logical_core[1].mperf, data.logical_core[1].energy, data.logical_core[1].msr_tsc, data.logical_core[1].io_apicTimer, data.logical_core[1].rdtsc, data.logical_core[1].rdtscp, data.logical_core[1].counter);
 
 
+    int core_with_highest_counter = 0;
+    if(data.logical_core[1].counter > data.logical_core[0].counter)
+        core_with_highest_counter = 1;
 
+	//check if the core with the highest counter also show all counter are also larger than the other core, if not flag as suspicious
 
+	printf("aperf delta: %i\n", data.logical_core[core_with_highest_counter].aperf - data.logical_core[!core_with_highest_counter].aperf);
+	printf("mperf delta: %i\n", data.logical_core[core_with_highest_counter].mperf - data.logical_core[!core_with_highest_counter].mperf);
+	printf("msr_tsc delta: %i\n", data.logical_core[core_with_highest_counter].msr_tsc - data.logical_core[!core_with_highest_counter].msr_tsc);
+	printf("io_apicTimer delta: %i\n", data.logical_core[core_with_highest_counter].io_apicTimer - data.logical_core[!core_with_highest_counter].io_apicTimer);
+	printf("rdtsc delta: %i\n", data.logical_core[core_with_highest_counter].rdtsc - data.logical_core[!core_with_highest_counter].rdtsc);
+	printf("rdtscp delta: %i\n", data.logical_core[core_with_highest_counter].rdtscp - data.logical_core[!core_with_highest_counter].rdtscp);
+	printf("counter delta: %i\n", data.logical_core[core_with_highest_counter].counter - data.logical_core[!core_with_highest_counter].counter);
 
-
+    auto cnt_total = data.logical_core[core_with_highest_counter].counter + data.logical_core[!core_with_highest_counter].counter;
+    auto aperf_val = data.logical_core[core_with_highest_counter].aperf / cnt_total;
+    auto io_val = data.logical_core[core_with_highest_counter].io_apicTimer / cnt_total;
+	auto tsc_val = data.logical_core[core_with_highest_counter].msr_tsc / cnt_total;
+	printf("counter total %i\n", cnt_total);
+	printf("aperf per count %i\n", aperf_val);
+    printf("io_apicTimer per count %i\n", io_val);
+    printf("tsc per count %i\n", tsc_val);
+	printf("io to tsc %i\n", tsc_val / io_val);
     //printf("start");
     //run_detection();
 	//printf("end");
