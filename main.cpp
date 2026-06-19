@@ -528,14 +528,13 @@ void ipi_probe(TSC_DATA* output)
 
 
 
-void ProbeCounters(TSC_DATA* out_delta)
+void ProbeCounters(TSC_DATA* start, TSC_DATA* end)
 {
     UINT64 unit = _mm_readmsr(0xC001029B);
     while (unit == _mm_readmsr(0xC001029B))
         _mm_pause();
 
-    TSC_DATA start, end;
-    read_tsc_data(&start);
+    read_tsc_data(start);
 
     int cnt = 0;
     unit = _mm_readmsr(0xC001029B);
@@ -545,21 +544,7 @@ void ProbeCounters(TSC_DATA* out_delta)
         cnt++;
     }
 
-    read_tsc_data(&end);
-
-    if (out_delta)
-    {
-        out_delta->aperf = end.aperf - start.aperf;
-        out_delta->mperf = end.mperf - start.mperf;
-        out_delta->energy = end.energy - start.energy;
-        out_delta->msr_tsc = end.msr_tsc - start.msr_tsc;
-        out_delta->io_apicTimer = end.io_apicTimer - start.io_apicTimer;
-        out_delta->rdtsc = end.rdtsc - start.rdtsc;
-        out_delta->rdtscp = end.rdtscp - start.rdtscp;
-        out_delta->counter = cnt;
-        out_delta->pstate = MSR::PSTATE_STATUS().CurPstate;
-    }
-
+    read_tsc_data(end);
     return;
 }
 
@@ -567,7 +552,8 @@ struct RTC_CPPC_DATA
 {
 	int target_core;
     MSR_CPPC_REQUEST cppc;
-	TSC_DATA logical_core[2];
+    TSC_DATA logical_core_start[2];
+    TSC_DATA logical_core_end[2];
 };
 
 void IpiCoreHandler(RTC_CPPC_DATA* output)
@@ -590,19 +576,9 @@ void IpiCoreHandler(RTC_CPPC_DATA* output)
     {
         auto old = MSR::CPPC_REQUEST();
         MSR::CPPC_REQUEST(output->cppc);
-
         int idx = coreid % 2;
-        TSC_DATA tsc_data;
-        ProbeCounters(&tsc_data);
-        output->logical_core[idx].aperf = tsc_data.aperf;
-        output->logical_core[idx].mperf = tsc_data.mperf;
-        output->logical_core[idx].energy = tsc_data.energy;
-        output->logical_core[idx].msr_tsc = tsc_data.msr_tsc;
-        output->logical_core[idx].io_apicTimer = tsc_data.io_apicTimer;
-        output->logical_core[idx].rdtsc = tsc_data.rdtsc;
-        output->logical_core[idx].rdtscp = tsc_data.rdtscp;
-        output->logical_core[idx].counter = tsc_data.counter;
-        output->logical_core[idx].pstate = tsc_data.pstate;
+
+        ProbeCounters(&output->logical_core_start[idx], &output->logical_core_end[idx]);
 
         MSR::CPPC_REQUEST(old);
     }
@@ -615,112 +591,79 @@ void ProbeCore(RTC_CPPC_DATA* output)
     return;
 }
 
+INT64 abs64(INT64 value)
+{
+    return (value < 0) ? -value : value;
+}
+
 NTSTATUS DriverEntry()
 {
     RTC_CPPC_DATA data{ 0 };
     auto cppc_capabilities = MSR::CPPC_CAPABILITY_1();
 	data.cppc.MinPerf = cppc_capabilities.LowestPerf;
 	data.cppc.MaxPerf = cppc_capabilities.HighestPerf;
-	data.cppc.DesPerf = cppc_capabilities.NominalPerf;
+	//data.cppc.DesPerf = cppc_capabilities.NominalPerf;
+	data.cppc.DesPerf = cppc_capabilities.HighestPerf;
     data.target_core = 0;
 
-	auto pstate_start = MSR::PSTATE_STATUS().CurPstate;
     ProbeCore(&data);
-	printf("Pstate before:after : %i -> %i\n", pstate_start, MSR::PSTATE_STATUS().CurPstate);
+   
+    printf("Core %i Logical Core 0 -> a %i m %i e %i mt %i io %i tsc %i tscp %i\n",
+        data.target_core,
+        data.logical_core_end[0].aperf - data.logical_core_start[0].aperf,
+        data.logical_core_end[0].mperf - data.logical_core_start[0].mperf,
+        data.logical_core_end[0].energy - data.logical_core_start[0].energy,
+        data.logical_core_end[0].msr_tsc - data.logical_core_start[0].msr_tsc,
+        data.logical_core_end[0].io_apicTimer - data.logical_core_start[0].io_apicTimer,
+        data.logical_core_end[0].rdtsc - data.logical_core_start[0].rdtsc,
+        data.logical_core_end[0].rdtscp - data.logical_core_start[0].rdtscp);
 
-    printf("Core %i) Pstate: %i -> a %i m %i e %i mt %i io %i tsc %i tscp %i cnt %i\n",
-		data.target_core, data.logical_core[0].pstate, data.logical_core[0].aperf, data.logical_core[0].mperf, data.logical_core[0].energy, data.logical_core[0].msr_tsc, data.logical_core[0].io_apicTimer, data.logical_core[0].rdtsc, data.logical_core[0].rdtscp, data.logical_core[0].counter);
-	printf("Core %i) Pstate: %i -> a %i m %i e %i mt %i io %i tsc %i tscp %i cnt %i\n",
-		data.target_core, data.logical_core[1].pstate, data.logical_core[1].aperf, data.logical_core[1].mperf, data.logical_core[1].energy, data.logical_core[1].msr_tsc, data.logical_core[1].io_apicTimer, data.logical_core[1].rdtsc, data.logical_core[1].rdtscp, data.logical_core[1].counter);
+    printf("Core %i Logical Core 1 -> a %i m %i e %i mt %i io %i tsc %i tscp %i\n",
+        data.target_core,
+        data.logical_core_end[1].aperf - data.logical_core_start[1].aperf,
+        data.logical_core_end[1].mperf - data.logical_core_start[1].mperf,
+        data.logical_core_end[1].energy - data.logical_core_start[1].energy,
+        data.logical_core_end[1].msr_tsc - data.logical_core_start[1].msr_tsc,
+        data.logical_core_end[1].io_apicTimer - data.logical_core_start[1].io_apicTimer,
+        data.logical_core_end[1].rdtsc - data.logical_core_start[1].rdtsc,
+		data.logical_core_end[1].rdtscp - data.logical_core_start[1].rdtscp);
 
+    printf("Core %i Logical rdtsc start %i end %i : %i jitter\n",
+        data.target_core,
+        data.logical_core_start[0].rdtsc - data.logical_core_start[1].rdtsc,
+        data.logical_core_end[0].rdtsc - data.logical_core_end[1].rdtsc,
+        abs64(abs64(data.logical_core_start[0].rdtsc - data.logical_core_start[1].rdtsc) - abs64(data.logical_core_end[0].rdtsc - data.logical_core_end[1].rdtsc))
+    );
+    printf("Core %i Logical rdtscp start %i end %i : %i jitter\n",
+        data.target_core,
+        data.logical_core_start[0].rdtscp - data.logical_core_start[1].rdtscp,
+		data.logical_core_end[0].rdtscp - data.logical_core_end[1].rdtscp,
+        abs64(abs64(data.logical_core_start[0].rdtscp - data.logical_core_start[1].rdtscp) - abs64(data.logical_core_end[0].rdtscp - data.logical_core_end[1].rdtscp))
+    );
+    printf("Core %i Logical msr_tsc start %i end %i : %i jitter\n",
+        data.target_core,
+		data.logical_core_start[0].msr_tsc - data.logical_core_start[1].msr_tsc,
+		data.logical_core_end[0].msr_tsc - data.logical_core_end[1].msr_tsc,
+        abs64(abs64(data.logical_core_start[0].msr_tsc - data.logical_core_start[1].msr_tsc) - abs64(data.logical_core_end[0].msr_tsc - data.logical_core_end[1].msr_tsc))
+    );
+    printf("Core %i Logical mperf start %i end %i : %i jitter\n",
+        data.target_core,
+        data.logical_core_start[0].mperf - data.logical_core_start[1].mperf,
+		data.logical_core_end[0].mperf - data.logical_core_end[1].mperf,
+		abs64(abs64(data.logical_core_start[0].mperf - data.logical_core_start[1].mperf) - abs64(data.logical_core_end[0].mperf - data.logical_core_end[1].mperf))
+    );
+    printf("Core %i Logical aperf start %i end %i : %i jitter\n",
+        data.target_core,
+		data.logical_core_start[0].aperf - data.logical_core_start[1].aperf,
+		data.logical_core_end[0].aperf - data.logical_core_end[1].aperf,
+        abs64(abs64(data.logical_core_start[0].aperf - data.logical_core_start[1].aperf) - abs64(data.logical_core_end[0].aperf - data.logical_core_end[1].aperf))
+    );
+    printf("Core %i Logical io_apicTimer start %i end %i : %i jitter\n",
+		data.target_core,
+		data.logical_core_start[0].io_apicTimer - data.logical_core_start[1].io_apicTimer,
+		data.logical_core_end[0].io_apicTimer - data.logical_core_end[1].io_apicTimer,
+        abs64(abs64(data.logical_core_start[0].io_apicTimer - data.logical_core_start[1].io_apicTimer) - abs64(data.logical_core_end[0].io_apicTimer - data.logical_core_end[1].io_apicTimer))
+    );
 
-    int core_with_highest_counter = 0;
-    if(data.logical_core[1].counter > data.logical_core[0].counter)
-        core_with_highest_counter = 1;
-
-	//check if the core with the highest counter also show all counter are also larger than the other core, if not flag as suspicious
-
-	printf("aperf delta: %i\n", data.logical_core[core_with_highest_counter].aperf - data.logical_core[!core_with_highest_counter].aperf);
-	printf("mperf delta: %i\n", data.logical_core[core_with_highest_counter].mperf - data.logical_core[!core_with_highest_counter].mperf);
-	printf("msr_tsc delta: %i\n", data.logical_core[core_with_highest_counter].msr_tsc - data.logical_core[!core_with_highest_counter].msr_tsc);
-	printf("io_apicTimer delta: %i\n", data.logical_core[core_with_highest_counter].io_apicTimer - data.logical_core[!core_with_highest_counter].io_apicTimer);
-	printf("rdtsc delta: %i\n", data.logical_core[core_with_highest_counter].rdtsc - data.logical_core[!core_with_highest_counter].rdtsc);
-	printf("rdtscp delta: %i\n", data.logical_core[core_with_highest_counter].rdtscp - data.logical_core[!core_with_highest_counter].rdtscp);
-	printf("counter delta: %i\n", data.logical_core[core_with_highest_counter].counter - data.logical_core[!core_with_highest_counter].counter);
-
-    auto cnt_total = data.logical_core[core_with_highest_counter].counter + data.logical_core[!core_with_highest_counter].counter;
-    auto aperf_val = data.logical_core[core_with_highest_counter].aperf / cnt_total;
-    auto io_val = data.logical_core[core_with_highest_counter].io_apicTimer / cnt_total;
-	auto tsc_val = data.logical_core[core_with_highest_counter].msr_tsc / cnt_total;
-	printf("counter total %i\n", cnt_total);
-	printf("aperf per count %i\n", aperf_val);
-    printf("io_apicTimer per count %i\n", io_val);
-    printf("tsc per count %i\n", tsc_val);
-	printf("io to tsc %i\n", tsc_val / io_val);
-    //printf("start");
-    //run_detection();
-	//printf("end");
-	//printf("PM: %i\n", PM());
-    //for (int i = 0; i < 10; i++)
-    //{
-    //    spin_100ms();
-    //    printf("1\n");
-    //}
-    //for (int i = 0; i < 10; i++)
-    //{
-    //    spin_100ms();
-    //    printf("2\n");
-    //}
-    //PauseTest();
-    //auto cppc = MSR::CPPC_CAPABILITY_1();
-	//printf("LowestPerf: %i\n", cppc.LowestPerf);
-	//printf("LowNonLinPerf: %i\n", cppc.LowNonLinPerf);
-	//printf("NominalPerf: %i\n", cppc.NominalPerf);
-	//printf("HighestPerf: %i\n", cppc.HighestPerf);
-	//auto cur_pstate = MSR::PSTATE_STATUS().CurPstate;
-    //auto pstate = MSR::PSTATE(cur_pstate);
-	//printf("Current Pstate: %i -> %i\n", pstate.get_frequency_mhz(), cur_pstate);
-	//printf("TscFreqSel: %i\n", MSR::HWCR().TscFreqSel);
-	//printf("LockTscToCurrentP0: %i\n", MSR::HWCR().LockTscToCurrentP0);
-	//printf("P(C) FID: %i\n", pstate.CpuFid);
-	//printf("P(C) VID: %i\n", pstate.CpuVid);
-	//printf("P(C) IddValue: %i\n", pstate.IddValue);
-	//printf("P(C) IddDiv: %i\n", pstate.IddDiv);
-	//printf("P(C) PstateEn: %i\n", pstate.PstateEn);
-    //printf("cppc Enabled: %i\n", MSR::CPPC_ENABLE().CPPC_En);
-	//auto P0 = MSR::PSTATE(0).get_frequency_mhz() * 100;
-	//printf("P0: %i MHz\n", P0);
-    //MSR_CPPC_REQUEST start = MSR::CPPC_REQUEST();
-    //printf("base min perf: %i\n", start.MinPerf);
-    //printf("base max perf: %i\n", start.MaxPerf);
-    //auto start_cpy = start;
-    //start_cpy.MinPerf = cppc.LowestPerf;
-	//start_cpy.MaxPerf = cppc.HighestPerf;
-    //auto irql = _mm_readcr8();
-    //_mm_writecr8(15);
-    //
-    //printf("p0 %i", MSR::PSTATE(0).get_frequency_mhz());
-    //DTC::ChangePstate(0);
-    //ipi_thing();//KeIpiGenericCall(ipi_thing, nullptr);
-    //printf("p1 %i", MSR::PSTATE(1).get_frequency_mhz());
-    //DTC::ChangePstate(1);
-    //ipi_thing();
-    //
-    //_mm_writecr8(irql);
-    //auto irql = _mm_readcr8();
-    //_mm_writecr8(15);
-    //MSR::CPPC_REQUEST(start_cpy);
-    //printf("min perf: %i\n", start_cpy.MinPerf);
-    //printf("max perf: %i\n", start_cpy.MaxPerf);
-    //Pause();
-    //
-    //for (int i = cppc.LowestPerf; i < cppc.HighestPerf; i+=10)
-    //{
-    //    SetPerformance(i);
-    //    SingleRTC::rdtsc();
-    //}
-    //
-    //_mm_writecr8(irql);
-    //MSR::CPPC_REQUEST(start);
     return STATUS_SUCCESS;
 }
