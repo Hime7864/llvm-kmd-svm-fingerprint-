@@ -582,6 +582,15 @@ struct RTC_CPPC_DATA
 		result += abs64(abs64(logical_core_end[0].aperf - logical_core_start[0].aperf) - abs64(logical_core_end[1].aperf - logical_core_start[1].aperf));
         return result;
 	}
+
+    UINT64 CalculateExecutionRatio()
+    {
+		auto aperf_delta_0 = logical_core_end[0].aperf - logical_core_start[0].aperf;
+		auto aperf_delta_1 = logical_core_end[1].aperf - logical_core_start[1].aperf;
+		auto aperf = (aperf_delta_0 > aperf_delta_1) ? aperf_delta_0 : aperf_delta_1;
+		auto cnt = logical_core_end[0].counter + logical_core_end[1].counter;
+        return aperf / cnt;
+    }
 };
 
 void IpiCoreHandler(RTC_CPPC_DATA* output)
@@ -619,81 +628,113 @@ void ProbeCore(RTC_CPPC_DATA* output)
     return;
 }
 
-NTSTATUS DriverEntry()
+void run_test()
 {
     RTC_CPPC_DATA data{ 0 };
     auto cppc_capabilities = MSR::CPPC_CAPABILITY_1();
-	data.cppc.MinPerf = cppc_capabilities.LowestPerf;
-	data.cppc.MaxPerf = cppc_capabilities.HighestPerf;
-	//data.cppc.DesPerf = cppc_capabilities.NominalPerf;
-	data.cppc.DesPerf = cppc_capabilities.HighestPerf;
+    data.cppc.MinPerf = cppc_capabilities.LowestPerf;
+    data.cppc.MaxPerf = cppc_capabilities.HighestPerf;
+    //data.cppc.DesPerf = cppc_capabilities.NominalPerf;
+    data.cppc.DesPerf = cppc_capabilities.HighestPerf;
     data.target_core = 0;
 
-    for (int i = 0; i < 10;i++)
+	UINT64 jitter = 0, tsc_delta = 0, execution = 0;
+
+    for (int i = 0; i < 5; i++)
     {
         ProbeCore(&data);
-        auto jitter = data.CalculateGrossJitter();
-        auto tsc_delta = data.CalculateGrossTscDelta();
-        printf("Core %i Gross Jitter: %i %i\n", data.target_core, jitter, tsc_delta);
+        Sleep(100);
+        jitter += data.CalculateGrossJitter();
+        tsc_delta += data.CalculateGrossTscDelta();
+        execution += data.CalculateExecutionRatio();
     }
-    
 
-    printf("Core %i Logical Core 0 -> a %i m %i e %i mt %i io %i tsc %i tscp %i\n",
-        data.target_core,
-        data.logical_core_end[0].aperf - data.logical_core_start[0].aperf,
-        data.logical_core_end[0].mperf - data.logical_core_start[0].mperf,
-        data.logical_core_end[0].energy - data.logical_core_start[0].energy,
-        data.logical_core_end[0].msr_tsc - data.logical_core_start[0].msr_tsc,
-        data.logical_core_end[0].io_apicTimer - data.logical_core_start[0].io_apicTimer,
-        data.logical_core_end[0].rdtsc - data.logical_core_start[0].rdtsc,
-        data.logical_core_end[0].rdtscp - data.logical_core_start[0].rdtscp);
-    
-    printf("Core %i Logical Core 1 -> a %i m %i e %i mt %i io %i tsc %i tscp %i\n",
-        data.target_core,
-        data.logical_core_end[1].aperf - data.logical_core_start[1].aperf,
-        data.logical_core_end[1].mperf - data.logical_core_start[1].mperf,
-        data.logical_core_end[1].energy - data.logical_core_start[1].energy,
-        data.logical_core_end[1].msr_tsc - data.logical_core_start[1].msr_tsc,
-        data.logical_core_end[1].io_apicTimer - data.logical_core_start[1].io_apicTimer,
-        data.logical_core_end[1].rdtsc - data.logical_core_start[1].rdtsc,
-		data.logical_core_end[1].rdtscp - data.logical_core_start[1].rdtscp);
-    
-    printf("Core %i Logical rdtsc start %i end %i : %i jitter\n",
-        data.target_core,
-        data.logical_core_start[0].rdtsc - data.logical_core_start[1].rdtsc,
-        data.logical_core_end[0].rdtsc - data.logical_core_end[1].rdtsc,
-        abs64(abs64(data.logical_core_start[0].rdtsc - data.logical_core_start[1].rdtsc) - abs64(data.logical_core_end[0].rdtsc - data.logical_core_end[1].rdtsc))
-    );
-    printf("Core %i Logical rdtscp start %i end %i : %i jitter\n",
-        data.target_core,
-        data.logical_core_start[0].rdtscp - data.logical_core_start[1].rdtscp,
-		data.logical_core_end[0].rdtscp - data.logical_core_end[1].rdtscp,
-        abs64(abs64(data.logical_core_start[0].rdtscp - data.logical_core_start[1].rdtscp) - abs64(data.logical_core_end[0].rdtscp - data.logical_core_end[1].rdtscp))
-    );
-    printf("Core %i Logical msr_tsc start %i end %i : %i jitter\n",
-        data.target_core,
-		data.logical_core_start[0].msr_tsc - data.logical_core_start[1].msr_tsc,
-		data.logical_core_end[0].msr_tsc - data.logical_core_end[1].msr_tsc,
-        abs64(abs64(data.logical_core_start[0].msr_tsc - data.logical_core_start[1].msr_tsc) - abs64(data.logical_core_end[0].msr_tsc - data.logical_core_end[1].msr_tsc))
-    );
-    printf("Core %i Logical mperf start %i end %i : %i jitter\n",
-        data.target_core,
-        data.logical_core_start[0].mperf - data.logical_core_start[1].mperf,
-		data.logical_core_end[0].mperf - data.logical_core_end[1].mperf,
-		abs64(abs64(data.logical_core_start[0].mperf - data.logical_core_start[1].mperf) - abs64(data.logical_core_end[0].mperf - data.logical_core_end[1].mperf))
-    );
-    printf("Core %i Logical aperf start %i end %i : %i jitter\n",
-        data.target_core,
-		data.logical_core_start[0].aperf - data.logical_core_start[1].aperf,
-		data.logical_core_end[0].aperf - data.logical_core_end[1].aperf,
-        abs64(abs64(data.logical_core_start[0].aperf - data.logical_core_start[1].aperf) - abs64(data.logical_core_end[0].aperf - data.logical_core_end[1].aperf))
-    );
-    printf("Core %i Logical io_apicTimer start %i end %i : %i jitter\n",
-		data.target_core,
-		data.logical_core_start[0].io_apicTimer - data.logical_core_start[1].io_apicTimer,
-		data.logical_core_end[0].io_apicTimer - data.logical_core_end[1].io_apicTimer,
-        abs64(abs64(data.logical_core_start[0].io_apicTimer - data.logical_core_start[1].io_apicTimer) - abs64(data.logical_core_end[0].io_apicTimer - data.logical_core_end[1].io_apicTimer))
-    );
+	jitter /= 10;
+	tsc_delta /= 10;
+    execution /= 10;
 
+    printf("Jitter:%08i | P-Delta:%08i | Execution:%08i\n", jitter, tsc_delta, execution);
+    return;
+}
+
+NTSTATUS DriverEntry()
+{
+    run_test();
+    //RTC_CPPC_DATA data{ 0 };
+    //auto cppc_capabilities = MSR::CPPC_CAPABILITY_1();
+	//data.cppc.MinPerf = cppc_capabilities.LowestPerf;
+	//data.cppc.MaxPerf = cppc_capabilities.HighestPerf;
+	////data.cppc.DesPerf = cppc_capabilities.NominalPerf;
+	//data.cppc.DesPerf = cppc_capabilities.HighestPerf;
+    //data.target_core = 0;
+    //
+    //for (int i = 0; i < 10;i++)
+    //{
+    //    ProbeCore(&data);
+    //    Sleep(100);
+    //    auto jitter = data.CalculateGrossJitter();
+    //    auto tsc_delta = data.CalculateGrossTscDelta();
+    //    auto desync = data.CalculateP0Desync();
+    //    printf("Jitter:%08i | P-Delta:%08i | Desync:%08i\n", jitter, tsc_delta, desync);
+    //}
+    //
+    //
+    //printf("Core %i Logical Core 0 -> a %i m %i e %i mt %i io %i tsc %i tscp %i\n",
+    //    data.target_core,
+    //    data.logical_core_end[0].aperf - data.logical_core_start[0].aperf,
+    //    data.logical_core_end[0].mperf - data.logical_core_start[0].mperf,
+    //    data.logical_core_end[0].energy - data.logical_core_start[0].energy,
+    //    data.logical_core_end[0].msr_tsc - data.logical_core_start[0].msr_tsc,
+    //    data.logical_core_end[0].io_apicTimer - data.logical_core_start[0].io_apicTimer,
+    //    data.logical_core_end[0].rdtsc - data.logical_core_start[0].rdtsc,
+    //    data.logical_core_end[0].rdtscp - data.logical_core_start[0].rdtscp);
+    //
+    //printf("Core %i Logical Core 1 -> a %i m %i e %i mt %i io %i tsc %i tscp %i\n",
+    //    data.target_core,
+    //    data.logical_core_end[1].aperf - data.logical_core_start[1].aperf,
+    //    data.logical_core_end[1].mperf - data.logical_core_start[1].mperf,
+    //    data.logical_core_end[1].energy - data.logical_core_start[1].energy,
+    //    data.logical_core_end[1].msr_tsc - data.logical_core_start[1].msr_tsc,
+    //    data.logical_core_end[1].io_apicTimer - data.logical_core_start[1].io_apicTimer,
+    //    data.logical_core_end[1].rdtsc - data.logical_core_start[1].rdtsc,
+	//	data.logical_core_end[1].rdtscp - data.logical_core_start[1].rdtscp);
+    //
+    //printf("Core %i Logical rdtsc start %i end %i : %i jitter\n",
+    //    data.target_core,
+    //    data.logical_core_start[0].rdtsc - data.logical_core_start[1].rdtsc,
+    //    data.logical_core_end[0].rdtsc - data.logical_core_end[1].rdtsc,
+    //    abs64(abs64(data.logical_core_start[0].rdtsc - data.logical_core_start[1].rdtsc) - abs64(data.logical_core_end[0].rdtsc - data.logical_core_end[1].rdtsc))
+    //);
+    //printf("Core %i Logical rdtscp start %i end %i : %i jitter\n",
+    //    data.target_core,
+    //    data.logical_core_start[0].rdtscp - data.logical_core_start[1].rdtscp,
+	//	data.logical_core_end[0].rdtscp - data.logical_core_end[1].rdtscp,
+    //    abs64(abs64(data.logical_core_start[0].rdtscp - data.logical_core_start[1].rdtscp) - abs64(data.logical_core_end[0].rdtscp - data.logical_core_end[1].rdtscp))
+    //);
+    //printf("Core %i Logical msr_tsc start %i end %i : %i jitter\n",
+    //    data.target_core,
+	//	data.logical_core_start[0].msr_tsc - data.logical_core_start[1].msr_tsc,
+	//	data.logical_core_end[0].msr_tsc - data.logical_core_end[1].msr_tsc,
+    //    abs64(abs64(data.logical_core_start[0].msr_tsc - data.logical_core_start[1].msr_tsc) - abs64(data.logical_core_end[0].msr_tsc - data.logical_core_end[1].msr_tsc))
+    //);
+    //printf("Core %i Logical mperf start %i end %i : %i jitter\n",
+    //    data.target_core,
+    //    data.logical_core_start[0].mperf - data.logical_core_start[1].mperf,
+	//	data.logical_core_end[0].mperf - data.logical_core_end[1].mperf,
+	//	abs64(abs64(data.logical_core_start[0].mperf - data.logical_core_start[1].mperf) - abs64(data.logical_core_end[0].mperf - data.logical_core_end[1].mperf))
+    //);
+    //printf("Core %i Logical aperf start %i end %i : %i jitter\n",
+    //    data.target_core,
+	//	data.logical_core_start[0].aperf - data.logical_core_start[1].aperf,
+	//	data.logical_core_end[0].aperf - data.logical_core_end[1].aperf,
+    //    abs64(abs64(data.logical_core_start[0].aperf - data.logical_core_start[1].aperf) - abs64(data.logical_core_end[0].aperf - data.logical_core_end[1].aperf))
+    //);
+    //printf("Core %i Logical io_apicTimer start %i end %i : %i jitter\n",
+	//	data.target_core,
+	//	data.logical_core_start[0].io_apicTimer - data.logical_core_start[1].io_apicTimer,
+	//	data.logical_core_end[0].io_apicTimer - data.logical_core_end[1].io_apicTimer,
+    //    abs64(abs64(data.logical_core_start[0].io_apicTimer - data.logical_core_start[1].io_apicTimer) - abs64(data.logical_core_end[0].io_apicTimer - data.logical_core_end[1].io_apicTimer))
+    //);
+    //
     return STATUS_SUCCESS;
 }
