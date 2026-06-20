@@ -102,7 +102,7 @@ Sanity check completed.
 
 # VMM compensation pattern
 
-A common VMM response to EFER reads is to rewind guest-visible TSC clocks and resynchronize APERF/MPERF on VM-exit, keeping all P0-derived TSC sources aligned:
+A common VMM response to EFER reads is to rewind guest-visible TSC clocks and resynchronize APERF/MPERF on VM-exit, keeping all P0-derived TSC sources aligned(APERF/MPERF Read-Only missed):
 
 ```cpp
 case MSR::_MSR_EFER:
