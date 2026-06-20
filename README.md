@@ -3,7 +3,7 @@
 This project is an research driver used for detecting VMMs that shadow Core::X86::Msr::EFER.SVME and spoof performance timers to hide that SVM is active.I've seen many people just read an MSR 10k times and look at the average — this is the next level past that. It specifically targets the "missing time" caused by compensations made on the guest-visible clocks.
 It works by correlating two hard-to-spoof, consistent time sources:
 
-- `Core::X86::Msr::CORE_ENERGY_STAT` — a read-only MSR that updates at a steady ~10-15 ms cadence.
+- `CORE_ENERGY_STAT` — a read-only MSR that updates at a steady ~10-15 ms cadence.
 - `I/O APIC timer` — an independent hardware timer driven by its own crystal oscillator.
 
 These two sources serve as a ground truth for elapsed time. Using them, the expected cycle count can be calculated and compared against the P0-derived timings to quantify any desyncs introduced by time negation in the guest.
