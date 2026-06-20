@@ -82,21 +82,21 @@ Flagged run (VM with TSC/APERF counter spoofing):
 
 ```
 Starting sanity check...
-
+ 
 ========================================
             EFER RESULTS
 ========================================
-  SVME state                     OFF
-  PM Counter                     8103 cycles
-  EFER read average              OK         150 cycles (limit: 1000 cycles)
+  SVME state                     OFF      
+  PM Counter                     1491       21122707744 expected
+  EFER read average              OK         168 cycles (limit: 1000 cycles)
   Power state elevation          FLAGGED    1 violations (limit: 1)
-  TSC desynchronization          FLAGGED    439205.29% desync (limit: 5%)
-  Interval desynchronization     FLAGGED    470467.36% desync (limit: 5%)
-  Workload desynchronization     FLAGGED    14671891 cycles (limit: 20 cycles)
+  TSC desynchronization          FLAGGED    376352.73% desync (limit: 5%)
+  Interval desynchronization     FLAGGED    376423.59% desync (limit: 5%)
+  Workload desynchronization     FLAGGED    45303369659 cycles (limit: 20 cycles)
 ----------------------------------------
   Result: FLAGGED (4/5 checks flagged)
 ========================================
-
+ 
 Sanity check completed.
 ```
 
