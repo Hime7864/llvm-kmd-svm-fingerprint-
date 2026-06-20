@@ -1,447 +1,363 @@
 #include <intrinsics.hpp>
 
-UINT64 NAKED io_apic_rtc()
+
+
+struct PERFORMANCE_DATA
 {
-    __asm {
-        push rdx
-        push r8
-        push r9
+private:
+    static UINT64 NAKED io_apic_rtc()
+    {
+        __asm {
+            push rdx
+            push r8
+            push r9
 
-        mov dx, 0x80C
-        mov ax, 0x4
-        out dx, ax
-        mov dx, 0x80B
-        in eax, dx
-        mov r8, rax
-        and r8, 0xFF
-        shl r8, 32
+            mov dx, 0x80C
+            mov ax, 0x4
+            out dx, ax
+            mov dx, 0x80B
+            in eax, dx
+            mov r8, rax
+            and r8, 0xFF
+            shl r8, 32
 
-        mov dx, 0x80A
-        out dx, ax
-        mov dx, 0x809
-        in eax, dx
-        mov r9, rax
-        and r9, 0xFFFF
-        shl r9, 16
-        or r8, r9
+            mov dx, 0x80A
+            out dx, ax
+            mov dx, 0x809
+            in eax, dx
+            mov r9, rax
+            and r9, 0xFFFF
+            shl r9, 16
+            or r8, r9
 
-        mov dx, 0x808
-        out dx, ax
-        mov dx, 0x807
-        in eax, dx
-        mov r9, rax
-        and r9, 0xFF00
-        or r8, r9
+            mov dx, 0x808
+            out dx, ax
+            mov dx, 0x807
+            in eax, dx
+            mov r9, rax
+            and r9, 0xFF00
+            or r8, r9
 
-        mov dx, 0x806
-        out dx, ax
-        mov dx, 0x805
-        in eax, dx
-        shr eax, 24
-        or r8, rax
+            mov dx, 0x806
+            out dx, ax
+            mov dx, 0x805
+            in eax, dx
+            shr eax, 24
+            or r8, rax
 
-        mov rax, r8
+            mov rax, r8
 
-        pop r9
-        pop r8
-        pop rdx
-        ret
+            pop r9
+            pop r8
+            pop rdx
+            ret
+        }
     }
-}
-
-struct TSC_DATA
-{
+public:
     UINT64 aperf;
     UINT64 mperf;
-    UINT64 energy;
+    UINT64 aperf_r;
+    UINT64 mperf_r;
     UINT64 msr_tsc;
     UINT64 io_apicTimer;
     UINT64 rdtsc;
     UINT64 rdtscp;
-    UINT64 counter;
     UINT64 pstate;
-};
 
-void read_tsc_data(TSC_DATA* data)
-{
-    data->aperf = MSR::APERF();
-    data->mperf = MSR::MPERF();
-    //data->energy = _mm_readmsr(0xC001029A);
-    data->msr_tsc = MSR::TSC();
-    data->io_apicTimer = io_apic_rtc();
-    data->rdtsc = __rdtsc();
-    UINT32 aux = 0;
-    data->rdtscp = _mm_rdtscp(&aux);
-    _mm_lfence();
-    _mm_mfence();
-    return;
-}
-
-struct ComputeUnitIdentifiers
-{
-    union
+    void read_tsc()
     {
-        UINT32 AsUINT32;
-        struct
-        {
-            UINT32 ComputeUnitId : 8;
-            UINT32 CoresPerComputeUnit : 2;
-            UINT32 Reserved : 22;
-        };
-    };
-};
+        aperf = MSR::APERF();
+        mperf = MSR::MPERF();
+		aperf_r = MSR::APERF_READ_ONLY();
+		mperf_r = MSR::MPERF_READ_ONLY();
+        msr_tsc = MSR::TSC();
+        io_apicTimer = io_apic_rtc();
+        rdtsc = __rdtsc();
+        UINT32 aux = 0;
+        rdtscp = _mm_rdtscp(&aux);
+        pstate = MSR::PSTATE_STATUS().CurPstate;
+        return;
+	}
 
-void GetTscOverhead(TSC_DATA* data)
-{
-    TSC_DATA start1, end1;
-    read_tsc_data(&start1);
-    read_tsc_data(&end1);
-
-    data->aperf = (end1.aperf - start1.aperf);
-    data->mperf = (end1.mperf - start1.mperf);
-    data->msr_tsc = (end1.msr_tsc - start1.msr_tsc);
-    data->io_apicTimer = (end1.io_apicTimer - start1.io_apicTimer);
-    data->rdtsc = (end1.rdtsc - start1.rdtsc);
-    data->rdtscp = (end1.rdtscp - start1.rdtscp);
-    return;
-}
-
-void ProbeCounters(TSC_DATA* start, TSC_DATA* end)
-{
-    UINT64 unit = _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS);
-    while (unit == _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS))
-        _mm_pause();
-
-    read_tsc_data(start);
-
-    int cnt = 0;
-    unit = _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS);
-    while (unit == _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS))
+    void diff_tsc(PERFORMANCE_DATA* other)
     {
-        _mm_readmsr(MSR::_MSR_EFER);
-        cnt++;
+        aperf -= other->aperf;
+        mperf -= other->mperf;
+		aperf_r -= other->aperf_r;
+		mperf_r -= other->mperf_r;
+        msr_tsc -= other->msr_tsc;
+        io_apicTimer -= other->io_apicTimer;
+        rdtsc -= other->rdtsc;
+        rdtscp -= other->rdtscp;
+        return;
+	}
+
+    void get_overhead(PERFORMANCE_DATA overhead)
+    {
+        PERFORMANCE_DATA pm0, pm1;
+        pm0.read_tsc();
+		pm1.read_tsc();
+        pm1.diff_tsc(&pm0);
+        return;
     }
-    read_tsc_data(end);
-    end->counter = cnt;
-    start->counter = cnt;
-}
 
-INT64 abs64(INT64 value)
-{
-    return (value < 0) ? -value : value;
-}
-
-double fabs(double value)
-{
-    return (value < 0.0) ? -value : value;
-}
-
-struct RTC_CPPC_DATA
-{
-    int target_core;
-    MSR_CPPC_REQUEST cppc;
-    TSC_DATA logical_core_start[2];
-    TSC_DATA logical_core_end[2];
-    TSC_DATA logical_core_overhead[2];
+    void apply_overhead(PERFORMANCE_DATA* output)
+    {
+		diff_tsc(output);
+        return;
+	}
 };
 
-void IpiCoreHandler(RTC_CPPC_DATA* output)
+class SANITY_DATA
 {
-    if (!output)
-        return;
-
-    ComputeUnitIdentifiers data;
-    data.AsUINT32 = CPUID::query(0x8000001E).ebx;
-
-    if (data.ComputeUnitId != output->target_core)
-        return;
-
-    auto coreid = KeGetCurrentProcessorNumberEx(nullptr);
-    auto irql = _mm_readcr8();
-    _mm_writecr8(15);
-
-    int idx = coreid % 2;
-
-    output->logical_core_start[idx].pstate = MSR::PSTATE_STATUS().CurPstate;
-    auto old = MSR::CPPC_REQUEST();
-    MSR::CPPC_REQUEST(output->cppc);
-
-    GetTscOverhead(&output->logical_core_overhead[idx]);
-    ProbeCounters(&output->logical_core_start[idx], &output->logical_core_end[idx]);
-	output->logical_core_end[idx].pstate = MSR::PSTATE_STATUS().CurPstate;
-
-    MSR::CPPC_REQUEST(old);
-    _mm_writecr8(irql);
-
-    output->logical_core_end[idx].msr_tsc -= output->logical_core_overhead[idx].msr_tsc;
-    output->logical_core_end[idx].aperf -= output->logical_core_overhead[idx].aperf;
-    output->logical_core_end[idx].mperf -= output->logical_core_overhead[idx].mperf;
-    output->logical_core_end[idx].io_apicTimer -= output->logical_core_overhead[idx].io_apicTimer;
-    output->logical_core_end[idx].rdtsc -= output->logical_core_overhead[idx].rdtsc;
-    output->logical_core_end[idx].rdtscp -= output->logical_core_overhead[idx].rdtscp;
-
-    return;
-}
-
-void ProbeCore(RTC_CPPC_DATA* output)
-{
-    KeIpiGenericCall(IpiCoreHandler, output);
-    return;
-}
-
-struct TSC_SANITY_DATA
-{
+private:
+    PERFORMANCE_DATA pm0;
+    PERFORMANCE_DATA pm1;
+    UINT64 pm_counter;
     double tsc_desync_ratio;
     double interval_desync_ratio;
     UINT64 rdtsc_delta_ajusted;
     UINT64 reported_cycles;
     UINT64 missing_cycles;
     UINT64 counter_total;
-	int pstate_start;
-	int pstate_end;
-    int pstate_vilolations;
+    bool svme_enabled;
+    bool pstate_vilolation;
 
-    bool is_vmexit_trigger_elevation() const
+    inline INT64 abs64(INT64 value) { return (value < 0) ? -value : value; }
+
+    inline double fabs(double value) { return (value < 0.0) ? -value : value; }
+
+    void Probe()
     {
-        return pstate_vilolations > 0;
+        pm0.pstate = MSR::PSTATE_STATUS().CurPstate;
+
+        PERFORMANCE_DATA overhead;
+        pm0.get_overhead(overhead);
+
+		//pause since core could be in the middle of an energy status update which would skew results
+        UINT64 unit = _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS);
+        while (unit == _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS))
+            _mm_pause();
+
+        pm0.read_tsc();
+
+        pm_counter = 0;
+        unit = _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS);
+        while (unit == _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS))
+        {
+            // funny thing here is only about 5% of the work load should be this read
+            _mm_readmsr(MSR::_MSR_EFER);
+            pm_counter++;
+        }
+
+        pm1.read_tsc();
+        //  should be forced to 1 via cppc request earlier
+        pm1.pstate = MSR::PSTATE_STATUS().CurPstate;
+        pm1.apply_overhead(&overhead);
+
+        return;
+    }
+
+public:
+
+    static INT64 get_efer_average()
+    {
+        auto irql = _mm_readcr8();
+        _mm_writecr8(15);
+        INT64 total = 0ULL;
+        for (int i = 0; i < 1000; i++)
+        {
+            auto tsc = __rdtsc();
+            auto efer = MSR::EFER();
+            total += __rdtsc() - tsc;
+        }
+        _mm_writecr8(irql);
+        return total / 1000;
+    }
+
+    static bool report_efer_average(UINT64 threshold)
+    {
+		return (UINT64)get_efer_average() > threshold;
+    }
+
+    bool report_power_elevation()
+    {
+        return pstate_vilolation;
+    }
+
+    INT64 get_tsc_desync()
+    {
+        auto percent = (INT64)(fabs(tsc_desync_ratio) * 100.0);
+        return abs64(percent);
+    }
+
+    bool report_tsc_desync(INT64 threshold)
+    {
+        return get_tsc_desync() > threshold;
+    }
+
+    INT64 get_interval_desync()
+    {
+        auto percent = (INT64)(fabs(interval_desync_ratio) * 100.0);
+        return abs64(percent);
 	}
 
-    bool is_tsc_desynced() const
+    bool report_interval_desync(INT64 threshold)
     {
-        return fabs(tsc_desync_ratio) > 0.05;
+        return get_interval_desync() > threshold;
     }
 
-    bool is_interval_desynced() const
-    {
-        return fabs(interval_desync_ratio) > 0.05;
-    }
-
-    bool is_reported_cycles_missing() const
+    INT64 get_workload_desync()
     {
         auto batch_reported_cycles = reported_cycles / counter_total;
         auto batch_expected_cycles = (reported_cycles + missing_cycles) / counter_total;
-        return abs64(batch_reported_cycles - batch_expected_cycles) > 20;
+        return abs64(batch_reported_cycles - batch_expected_cycles);
+	}
+
+    bool report_workload_desync(INT64 threshold)
+    {
+        return get_workload_desync() > threshold;
     }
 
-    int interval_desync_percent() const
+    bool Run(MSR_CPPC_REQUEST target_cppc)
     {
-        auto percent = (int)(interval_desync_ratio * 100.0);
-        return (int)abs64(percent);
+        auto old_cppc = MSR::CPPC_REQUEST();
+		MSR::CPPC_REQUEST(target_cppc);
+
+        Probe();
+
+		MSR::CPPC_REQUEST(old_cppc);
+
+		auto mperf_delta = pm1.mperf - pm0.mperf;
+		auto aperf_delta = pm1.aperf - pm0.aperf;
+		auto mperf_r_delta = pm1.mperf_r - pm0.mperf_r;
+		auto aperf_r_delta = pm1.aperf_r - pm0.aperf_r;
+		auto msr_tsc_delta = pm1.msr_tsc - pm0.msr_tsc;
+		auto io_apic_delta = pm1.io_apicTimer - pm0.io_apicTimer;
+		auto rdtsc_delta = pm1.rdtsc - pm0.rdtsc;
+		auto rdtscp_delta = pm1.rdtscp - pm0.rdtscp;
+
+        auto io_ratio = 920000.0 / (double)io_apic_delta;
+        auto expected_p0 = MSR::PSTATE(0).get_frequency_mhz() * 1000;
+
+        auto mperf_delta_ajusted = (UINT64)((double)mperf_delta * io_ratio);
+        auto aperf_delta_ajusted = (UINT64)((double)aperf_delta * io_ratio);
+        auto mperf_r_delta_ajusted = (UINT64)((double)mperf_r_delta * io_ratio);
+        auto aperf_r_delta_ajusted = (UINT64)((double)aperf_r_delta * io_ratio);
+        auto msr_tsc_delta_ajusted = (UINT64)((double)msr_tsc_delta * io_ratio);
+        auto io_apic_delta_ajusted = (UINT64)((double)io_apic_delta * io_ratio);
+        auto rdtsc_delta_ajusted = (UINT64)((double)rdtsc_delta * io_ratio);
+        auto rdtscp_delta_ajusted = (UINT64)((double)rdtscp_delta * io_ratio);
+
+        double sync_ratio = 0.0;
+        sync_ratio += (double)aperf_delta / (double)aperf_r_delta;
+        sync_ratio += (double)mperf_delta / (double)mperf_r_delta;
+		sync_ratio += (double)mperf_delta / (double)msr_tsc_delta;
+        sync_ratio += (double)mperf_delta / (double)rdtsc_delta;
+        sync_ratio += (double)mperf_delta / (double)rdtscp_delta;
+        tsc_desync_ratio = (sync_ratio / 5.0) - 1.0;
+
+        double expected_sync_ratio = 0.0;
+        expected_sync_ratio += (double)expected_p0 / (double)mperf_delta_ajusted;
+        expected_sync_ratio += (double)expected_p0 / (double)mperf_r_delta_ajusted;
+        expected_sync_ratio += (double)expected_p0 / (double)msr_tsc_delta_ajusted;
+        expected_sync_ratio += (double)expected_p0 / (double)rdtsc_delta_ajusted;
+        expected_sync_ratio += (double)expected_p0 / (double)rdtscp_delta_ajusted;
+        interval_desync_ratio = (expected_sync_ratio / 5.0) - 1.0;
+
+        reported_cycles = aperf_delta_ajusted;
+        missing_cycles = abs64((UINT64)((double)aperf_delta_ajusted * interval_desync_ratio));
+		counter_total = (UINT64)((double)pm_counter * io_ratio);
+        svme_enabled = MSR::EFER().svme;
+        pstate_vilolation = MSR::PSTATE_STATUS().CurPstate != 1;
+
+        return true;
     }
 
-    int tsc_desync_percent() const
+    void log_results()
     {
-        auto percent = (int)(tsc_desync_ratio * 100.0);
-        return (int)abs64(percent);
-    }
+        char detail[256]{};
+        int flagged_count = 0;
 
-    UINT64 rtc_missing_cycles() const
-    {
-        if (!reported_cycles)
-            return 0;
-        return (missing_cycles / reported_cycles) * rdtsc_delta_ajusted;
+        printf("\n");
+        printf("========================================\n");
+        printf("           SANITY CHECK\n");
+        printf("========================================\n");
+
+        printf("  %-30s %-9s\n", "SVME state", svme_enabled ? "ON" : "OFF");
+
+		auto efer_flagged = report_efer_average(1000);
+		sprintf(detail, "%llu %s", get_efer_average(), "cycles");
+        printf("  %-30s %-9s  %s (limit: %s)\n",
+            "EFER read average",
+            efer_flagged ? "FLAGGED" : "OK",
+            detail,
+			"1000 cycles");
+        flagged_count += efer_flagged ? 1 : 0;
+
+        auto elevation_flagged = report_power_elevation();
+        sprintf(detail, "%i violations", elevation_flagged ? 1 : 0);
+        printf("  %-30s %-9s  %s (limit: %s)\n",
+            "Power state elevation",
+            elevation_flagged ? "FLAGGED" : "OK",
+            detail,
+            "1");
+        flagged_count += elevation_flagged ? 1 : 0;
+
+        auto tsc_flagged = report_tsc_desync(5);
+        sprintf(detail, "%i%% desync", (int)get_tsc_desync());
+        printf("  %-30s %-9s  %s (limit: %s)\n",
+            "TSC desynchronization",
+            tsc_flagged ? "FLAGGED" : "OK",
+            detail,
+            "5%");
+        flagged_count += tsc_flagged ? 1 : 0;
+
+        auto interval_flagged = report_interval_desync(5);
+        sprintf(detail, "%i%% desync", (int)get_interval_desync());
+        printf("  %-30s %-9s  %s (limit: %s)\n",
+            "Interval desynchronization",
+            interval_flagged ? "FLAGGED" : "OK",
+            detail,
+            "5%");
+        flagged_count += interval_flagged ? 1 : 0;
+
+        auto workload_flagged = report_workload_desync(20);
+        sprintf(detail, "%lld cycles", get_workload_desync());
+        printf("  %-30s %-9s  %s (limit: %s)\n",
+            "Workload desynchronization",
+            workload_flagged ? "FLAGGED" : "OK",
+            detail,
+            "20 cycles");
+        flagged_count += workload_flagged ? 1 : 0;
+
+        printf("----------------------------------------\n");
+        if (flagged_count == 0)
+            printf("  Result: CLEAN  (0/5 checks flagged)\n");
+        else
+            printf("  Result: FLAGGED (%i/5 checks flagged)\n", flagged_count);
+        printf("========================================\n\n");
+        return;
     }
 };
 
-static void log_banner()
-{
-    printf("\n");
-    printf("========================================\n");
-    printf("  SVM SVME Spoofing Detectornator\n");
-    printf("========================================\n");
-    return;
-}
-
-static void log_check(const char* name, const char* threshold, bool flagged, const char* detail)
-{
-    printf("  %-30s %-9s  %s (limit: %s)\n",
-        name,
-        flagged ? "FLAGGED" : "OK",
-        detail,
-        threshold);
-    return;
-}
-
-static void log_summary(bool interval_flagged, bool tsc_flagged, bool workload_flagged, bool elevation_flagged, bool efer_overhead_flagged)
-{
-    int flagged_count = (interval_flagged ? 1 : 0) + (tsc_flagged ? 1 : 0) + (workload_flagged ? 1 : 0) + (elevation_flagged ? 1 : 0) + (efer_overhead_flagged ? 1 : 0);
-
-    printf("----------------------------------------\n");
-    if (flagged_count == 0)
-        printf("  Result: CLEAN  (0/5 checks flagged)\n");
-    else
-        printf("  Result: FLAGGED (%i/5 checks flagged)\n", flagged_count);
-    printf("========================================\n\n");
-    return;
-}
-
-void ProtoSanityCheckTsc(TSC_SANITY_DATA* output, int core_id)
-{
-    if (!output)
-        return;
-
-    RTC_CPPC_DATA data{ 0 };
-    auto cppc_capabilities = MSR::CPPC_CAPABILITY_1();
-    data.cppc.MinPerf = cppc_capabilities.LowestPerf;
-    data.cppc.MaxPerf = cppc_capabilities.HighestPerf;
-    data.cppc.DesPerf = cppc_capabilities.NominalPerf;
-    data.target_core = core_id;
-
-    ProbeCore(&data);
-
-    auto mperf_delta = data.logical_core_end[0].mperf - data.logical_core_start[0].mperf;
-    auto msr_tsc_delta = data.logical_core_end[0].msr_tsc - data.logical_core_start[0].msr_tsc;
-    auto rdtsc_delta = data.logical_core_end[0].rdtsc - data.logical_core_start[0].rdtsc;
-    auto rdtsp_delta = data.logical_core_end[0].rdtscp - data.logical_core_start[0].rdtscp;
-
-    double sync_ratio = (double)mperf_delta / (double)msr_tsc_delta;
-    sync_ratio += (double)mperf_delta / (double)rdtsc_delta;
-    sync_ratio += (double)mperf_delta / (double)rdtsp_delta;
-    output->tsc_desync_ratio = (sync_ratio / 3.0) - 1.0;
-
-    auto io_apic_ratio = 920000.0 / (double)(data.logical_core_end[0].io_apicTimer - data.logical_core_start[0].io_apicTimer);
-    auto reported_aperf_delta = data.logical_core_end[0].aperf - data.logical_core_start[0].aperf;
-    auto counter_total = data.logical_core_end[0].counter + data.logical_core_end[1].counter;
-
-    auto counter_total_ajusted = (UINT64)((double)counter_total * io_apic_ratio);
-    auto mperf_delta_ajusted = (UINT64)((double)mperf_delta * io_apic_ratio);
-    auto msr_tsc_delta_ajusted = (UINT64)((double)msr_tsc_delta * io_apic_ratio);
-    auto rdtsc_delta_ajusted = (UINT64)((double)rdtsc_delta * io_apic_ratio);
-    auto rdtsp_delta_ajusted = (UINT64)((double)rdtsp_delta * io_apic_ratio);
-    auto reported_aperf_delta_ajusted = (UINT64)((double)reported_aperf_delta * io_apic_ratio);
-
-    auto p0_MHz = MSR::PSTATE(0).get_frequency_mhz() * 1000;
-
-    double MHz_ratio = (double)p0_MHz / (double)mperf_delta_ajusted;
-    MHz_ratio += (double)p0_MHz / (double)msr_tsc_delta_ajusted;
-    MHz_ratio += (double)p0_MHz / (double)rdtsc_delta_ajusted;
-    MHz_ratio += (double)p0_MHz / (double)rdtsp_delta_ajusted;
-
-    auto MHz_ratio_total = 1.0 - (MHz_ratio / 4.0);
-    output->interval_desync_ratio = MHz_ratio_total;
-
-    auto reported_cycles = reported_aperf_delta_ajusted;
-    auto missing_cycles = abs64((UINT64)(reported_aperf_delta_ajusted * MHz_ratio_total));
-
-    output->reported_cycles = reported_cycles;
-    output->missing_cycles = missing_cycles;
-    output->counter_total = counter_total_ajusted;
-    output->rdtsc_delta_ajusted = rdtsc_delta_ajusted;
-	output->pstate_start = data.logical_core_start[0].pstate;
-	output->pstate_end = data.logical_core_end[0].pstate;
-
-    return;
-}
-
-void SanityCheckTsc(TSC_SANITY_DATA* output, int core_id)
-{
-	int bad_pstate_count = 0;
-    TSC_SANITY_DATA sanity_data[3]{ 0 };
-    for (int i = 0; i < 3; i++)
-    {
-        ProtoSanityCheckTsc(&sanity_data[i], core_id);
-        if(sanity_data[i].pstate_end == 0)
-            bad_pstate_count++;
-    }
-
-    for (int i = 0; i < 3; i++)
-    {
-        if (sanity_data[i].missing_cycles < output->missing_cycles || output->missing_cycles == 0)
-            *output = sanity_data[i];
-    }
-    return;
-}
-
-INT64 GetEferAverage()
-{
-	auto irql = _mm_readcr8();
-	_mm_writecr8(15);
-    INT64 total = 0ULL;
-    for (int i = 0; i < 1000; i++)
-    {
-		auto tsc = __rdtsc();
-		auto efer = MSR::EFER();
-        total += __rdtsc() - tsc;
-    }
-	_mm_writecr8(irql);
-    return total / 1000;
-}
-
-bool is_efer_overhead_high(INT64* data)
-{
-    *data = GetEferAverage();
-    return (UINT64)*data > 1000ull;
-}
-
-//bool pstate_shadowing_violation()
-//{
-//    int result = 0;
-//    MSR_PSTATE_CONTROL control;
-//    for (int i = 0; i < 8; i++)
-//	{
-//        control.PstateCmd = !MSR::PSTATE_STATUS().CurPstate;
-//		MSR::PSTATE_CONTROL(control);
-//        if (control.PstateCmd == MSR::PSTATE_STATUS().CurPstate)
-//        {
-//            result++;
-//        }
-//	}
-//    return result > 5;
-//}
-
-
-void RunTest(int core_id)
-{
-    log_banner();
-    printf("  Running probes on core %i...\n\n", core_id);
-
-    TSC_SANITY_DATA tsc_sanity{ 0 };
-    SanityCheckTsc(&tsc_sanity, core_id);
-
-    char detail[256]{0};
-
-	INT64 efer_overhead = 0;
-	auto efer_overhead_flagged = is_efer_overhead_high(&efer_overhead);
-	sprintf(detail, "%i cycles", efer_overhead);
-	log_check("EFER read overhead", "1000", efer_overhead_flagged, detail);
-
-    //auto pstate_shadowing_flagged = pstate_shadowing_violation();
-    //sprintf(detail, "%i", pstate_shadowing_flagged);
-    //log_check("P-state shadowing violation", "0", pstate_shadowing_flagged, detail);
-
-	auto elevation_flagged = tsc_sanity.is_vmexit_trigger_elevation();
-	sprintf(detail, "%i violations", tsc_sanity.pstate_vilolations);
-	log_check("Power state elevation", "1", elevation_flagged, detail);
-
-    auto interval_flagged = tsc_sanity.is_interval_desynced();
-    sprintf(detail, "%i%% desync", tsc_sanity.interval_desync_percent());
-    log_check("Interval desynchronization", "5%", interval_flagged, detail);
-
-    auto tsc_flagged = tsc_sanity.is_tsc_desynced();
-    sprintf(detail, "%i%% desync", tsc_sanity.tsc_desync_percent());
-    log_check("TSC desynchronization", "5%", tsc_flagged, detail);
-
-    auto workload_flagged = tsc_sanity.is_reported_cycles_missing();
-    if (workload_flagged)
-    {
-        sprintf(detail, "%llu missing cycles, ~%llu RTC cycles",
-            tsc_sanity.missing_cycles,
-            tsc_sanity.rtc_missing_cycles());
-    }
-    else
-    {
-        auto batch_reported_cycles = tsc_sanity.reported_cycles / tsc_sanity.counter_total;
-        auto batch_expected_cycles = (tsc_sanity.reported_cycles + tsc_sanity.missing_cycles) / tsc_sanity.counter_total;
-        sprintf(detail, "%llu cycles unaccounted for", abs64(batch_reported_cycles - batch_expected_cycles));
-    }
-    log_check("Workload desynchronization", "20 cycles", workload_flagged, detail);
-
-    log_summary(interval_flagged, tsc_flagged, workload_flagged, elevation_flagged, efer_overhead_flagged);
-    return;
-}
-
 NTSTATUS DriverEntry()
 {
-    RunTest(0);
+    MSR_CPPC_REQUEST cppc_request;
+    auto cppc_capabilities = MSR::CPPC_CAPABILITY_1();
+    cppc_request.MinPerf = cppc_capabilities.LowestPerf;
+    cppc_request.MaxPerf = cppc_capabilities.HighestPerf;
+    cppc_request.DesPerf = cppc_capabilities.NominalPerf; // This will Set P1 later on in RUN() and disabling boosting
+
+    auto sanity = (SANITY_DATA*)ExAllocatePool(NonPagedPool, sizeof(SANITY_DATA));
+
+    auto irql = _mm_readcr8();
+    _mm_writecr8(15);
+    sanity->Run(cppc_request);
+    sanity->log_results();
+    _mm_writecr8(irql);
+
+    ExFreePool(sanity);
+
     return STATUS_SUCCESS;
 }
