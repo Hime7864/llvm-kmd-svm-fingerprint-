@@ -20,7 +20,7 @@ The probe flow is:
 1. `RunTest()` starts a TSC sanity check for the selected compute unit.
 2. `SanityCheckTsc()` runs the lower-level probe three times and keeps the sample with the smallest missing-cycle estimate.
 3. `ProtoSanityCheckTsc()` builds the probe configuration from `MSR_CPPC_CAPABILITY_1`, requests a high-performance CPPC/P-state target, and dispatches the probe across processors with `KeIpiGenericCall()`.
-4. `IpiCoreHandler()` filters processors by AMD compute unit ID (from CPUID leaf 0x8000001E) so that both logical processors on the same physical core execute the probe code simultaneously. This prevents the core from being dirtied by unrelated threads. It then raises IRQL, forces P-state command 0, applies the CPPC request, and runs the counter probe.
+4. `IpiCoreHandler()` filters processors by AMD compute unit ID (from `CPUID Fn8000_001E_EBX Compute Unit Identifiers`) so that both logical processors on the same physical core execute the probe code simultaneously. This prevents the core from being dirtied by unrelated threads. It then raises IRQL, forces P-state command 0, applies the CPPC request, and runs the counter probe.
 5. `ProbeCounters()` waits for `Core::X86::Msr::CORE_ENERGY_STAT` to change, snapshots all timing sources, then repeatedly reads `Core::X86::Msr::EFER` until `Core::X86::Msr::CORE_ENERGY_STAT` changes again. This gives the probe a roughly 10-15 ms measurement window and records how many intercepted-looking MSR reads completed inside that window.
 6. `ProtoSanityCheckTsc()` normalizes the deltas with the I/O APIC timer, compares them against the expected P0-state interval, and calculates the final missing-time/desynchronization ratios.
 
