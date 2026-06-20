@@ -131,6 +131,11 @@ INT64 abs64(INT64 value)
     return (value < 0) ? -value : value;
 }
 
+double fabs(double value)
+{
+    return (value < 0.0) ? -value : value;
+}
+
 struct RTC_CPPC_DATA
 {
     int target_core;
@@ -203,12 +208,12 @@ struct TSC_SANITY_DATA
 
     bool is_tsc_desynced() const
     {
-        return tsc_desync_ratio > 0.05;
+        return fabs(tsc_desync_ratio) > 0.05;
     }
 
     bool is_interval_desynced() const
     {
-        return interval_desync_ratio > 0.05;
+        return fabs(interval_desync_ratio) > 0.05;
     }
 
     bool is_reported_cycles_missing() const
