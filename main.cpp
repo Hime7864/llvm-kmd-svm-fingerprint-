@@ -223,7 +223,7 @@ public:
         return get_workload_desync() > threshold;
     }
 
-    bool Run(MSR_CPPC_REQUEST target_cppc)
+    void Run(MSR_CPPC_REQUEST target_cppc)
     {
         auto old_cppc = MSR::CPPC_REQUEST();
 		MSR::CPPC_REQUEST(target_cppc);
@@ -273,6 +273,10 @@ public:
         missing_cycles = abs64((UINT64)((double)aperf_delta_ajusted * interval_desync_ratio));
 		counter_total = (UINT64)((double)pm_counter * io_ratio);
 
+        UINT64 unit = _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS);
+        while (unit == _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS))
+            _mm_pause();
+
         old_cppc = MSR::CPPC_REQUEST();
         target_cppc.DesPerf = target_cppc.MaxPerf;
         MSR::CPPC_REQUEST(target_cppc);
@@ -281,11 +285,9 @@ public:
 		MSR::PSTATE_CONTROL(cmd);
         svme_enabled = MSR::EFER().svme;
         pstate_vilolation = MSR::PSTATE_STATUS().CurPstate != 1;
-
         MSR::CPPC_REQUEST(old_cppc);
-        
 
-        return true;
+        return;
     }
 
     void log_results()
