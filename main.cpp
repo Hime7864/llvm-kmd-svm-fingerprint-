@@ -74,6 +74,7 @@ void read_tsc_data(TSC_DATA* data)
     data->rdtscp = _mm_rdtscp(&aux);
     _mm_lfence();
     _mm_mfence();
+    return;
 }
 
 struct ComputeUnitIdentifiers
@@ -90,17 +91,32 @@ struct ComputeUnitIdentifiers
     };
 };
 
+void GetTscOverhead(TSC_DATA* data)
+{
+    TSC_DATA start1, end1;
+    read_tsc_data(&start1);
+    read_tsc_data(&end1);
+
+    data->aperf = (end1.aperf - start1.aperf);
+    data->mperf = (end1.mperf - start1.mperf);
+    data->msr_tsc = (end1.msr_tsc - start1.msr_tsc);
+    data->io_apicTimer = (end1.io_apicTimer - start1.io_apicTimer);
+    data->rdtsc = (end1.rdtsc - start1.rdtsc);
+    data->rdtscp = (end1.rdtscp - start1.rdtscp);
+    return;
+}
+
 void ProbeCounters(TSC_DATA* start, TSC_DATA* end)
 {
-    UINT64 unit = _mm_readmsr(0xC001029B);
-    while (unit == _mm_readmsr(0xC001029B))
+    UINT64 unit = _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS);
+    while (unit == _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS))
         _mm_pause();
 
     read_tsc_data(start);
 
     int cnt = 0;
-    unit = _mm_readmsr(0xC001029B);
-    while (unit == _mm_readmsr(0xC001029B))
+    unit = _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS);
+    while (unit == _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS))
     {
         _mm_readmsr(MSR::_MSR_EFER);
         cnt++;
@@ -121,6 +137,7 @@ struct RTC_CPPC_DATA
     MSR_CPPC_REQUEST cppc;
     TSC_DATA logical_core_start[2];
     TSC_DATA logical_core_end[2];
+    TSC_DATA logical_core_overhead[2];
 };
 
 void IpiCoreHandler(RTC_CPPC_DATA* output)
@@ -138,23 +155,29 @@ void IpiCoreHandler(RTC_CPPC_DATA* output)
     auto irql = _mm_readcr8();
     _mm_writecr8(15);
 
-    MSR_PSTATE_CONTROL cmd{ 0 };
-    cmd.PstateCmd = 0;
-    MSR::PSTATE_CONTROL(cmd);
-
     auto old = MSR::CPPC_REQUEST();
     MSR::CPPC_REQUEST(output->cppc);
 
     int idx = coreid % 2;
+    GetTscOverhead(&output->logical_core_overhead[idx]);
     ProbeCounters(&output->logical_core_start[idx], &output->logical_core_end[idx]);
-
     MSR::CPPC_REQUEST(old);
     _mm_writecr8(irql);
+
+    output->logical_core_end[idx].msr_tsc -= output->logical_core_overhead[idx].msr_tsc;
+    output->logical_core_end[idx].aperf -= output->logical_core_overhead[idx].aperf;
+    output->logical_core_end[idx].mperf -= output->logical_core_overhead[idx].mperf;
+    output->logical_core_end[idx].io_apicTimer -= output->logical_core_overhead[idx].io_apicTimer;
+    output->logical_core_end[idx].rdtsc -= output->logical_core_overhead[idx].rdtsc;
+    output->logical_core_end[idx].rdtscp -= output->logical_core_overhead[idx].rdtscp;
+
+    return;
 }
 
 void ProbeCore(RTC_CPPC_DATA* output)
 {
     KeIpiGenericCall(IpiCoreHandler, output);
+    return;
 }
 
 struct TSC_SANITY_DATA
@@ -209,6 +232,7 @@ static void log_banner()
     printf("========================================\n");
     printf("  SVM TSC Fingerprint Detection\n");
     printf("========================================\n");
+    return;
 }
 
 static void log_check(const char* name, const char* threshold, bool flagged, const char* detail)
@@ -218,6 +242,7 @@ static void log_check(const char* name, const char* threshold, bool flagged, con
         flagged ? "FLAGGED" : "OK",
         detail,
         threshold);
+    return;
 }
 
 static void log_summary(bool interval_flagged, bool tsc_flagged, bool workload_flagged)
@@ -230,6 +255,7 @@ static void log_summary(bool interval_flagged, bool tsc_flagged, bool workload_f
     else
         printf("  Result: FLAGGED (%i/3 checks flagged)\n", flagged_count);
     printf("========================================\n\n");
+    return;
 }
 
 void ProtoSanityCheckTsc(TSC_SANITY_DATA* output, int core_id)
@@ -284,6 +310,7 @@ void ProtoSanityCheckTsc(TSC_SANITY_DATA* output, int core_id)
     output->missing_cycles = missing_cycles;
     output->counter_total = counter_total_ajusted;
     output->rdtsc_delta_ajusted = rdtsc_delta_ajusted;
+    return;
 }
 
 void SanityCheckTsc(TSC_SANITY_DATA* output, int core_id)
@@ -297,6 +324,7 @@ void SanityCheckTsc(TSC_SANITY_DATA* output, int core_id)
         if (sanity_data[i].missing_cycles < output->missing_cycles || output->missing_cycles == 0)
             *output = sanity_data[i];
     }
+    return;
 }
 
 
