@@ -155,12 +155,16 @@ void IpiCoreHandler(RTC_CPPC_DATA* output)
     auto irql = _mm_readcr8();
     _mm_writecr8(15);
 
+    int idx = coreid % 2;
+
+    output->logical_core_start[idx].pstate = MSR::PSTATE_STATUS().CurPstate;
     auto old = MSR::CPPC_REQUEST();
     MSR::CPPC_REQUEST(output->cppc);
 
-    int idx = coreid % 2;
     GetTscOverhead(&output->logical_core_overhead[idx]);
     ProbeCounters(&output->logical_core_start[idx], &output->logical_core_end[idx]);
+	output->logical_core_end[idx].pstate = MSR::PSTATE_STATUS().CurPstate;
+
     MSR::CPPC_REQUEST(old);
     _mm_writecr8(irql);
 
@@ -188,6 +192,14 @@ struct TSC_SANITY_DATA
     UINT64 reported_cycles;
     UINT64 missing_cycles;
     UINT64 counter_total;
+	int pstate_start;
+	int pstate_end;
+    int pstate_vilolations;
+
+    bool is_vmexit_trigger_elevation() const
+    {
+        return pstate_vilolations > 0;
+	}
 
     bool is_tsc_desynced() const
     {
@@ -245,15 +257,15 @@ static void log_check(const char* name, const char* threshold, bool flagged, con
     return;
 }
 
-static void log_summary(bool interval_flagged, bool tsc_flagged, bool workload_flagged)
+static void log_summary(bool interval_flagged, bool tsc_flagged, bool workload_flagged, bool elevation_flagged)
 {
-    int flagged_count = (interval_flagged ? 1 : 0) + (tsc_flagged ? 1 : 0) + (workload_flagged ? 1 : 0);
+    int flagged_count = (interval_flagged ? 1 : 0) + (tsc_flagged ? 1 : 0) + (workload_flagged ? 1 : 0) + (elevation_flagged ? 1 : 0);
 
     printf("----------------------------------------\n");
     if (flagged_count == 0)
-        printf("  Result: CLEAN  (0/3 checks flagged)\n");
+        printf("  Result: CLEAN  (0/4 checks flagged)\n");
     else
-        printf("  Result: FLAGGED (%i/3 checks flagged)\n", flagged_count);
+        printf("  Result: FLAGGED (%i/4 checks flagged)\n", flagged_count);
     printf("========================================\n\n");
     return;
 }
@@ -310,14 +322,22 @@ void ProtoSanityCheckTsc(TSC_SANITY_DATA* output, int core_id)
     output->missing_cycles = missing_cycles;
     output->counter_total = counter_total_ajusted;
     output->rdtsc_delta_ajusted = rdtsc_delta_ajusted;
+	output->pstate_start = data.logical_core_start[0].pstate;
+	output->pstate_end = data.logical_core_end[0].pstate;
+
     return;
 }
 
 void SanityCheckTsc(TSC_SANITY_DATA* output, int core_id)
 {
+	int bad_pstate_count = 0;
     TSC_SANITY_DATA sanity_data[3]{ 0 };
     for (int i = 0; i < 3; i++)
+    {
         ProtoSanityCheckTsc(&sanity_data[i], core_id);
+        if(sanity_data[i].pstate_end == 0)
+            bad_pstate_count++;
+    }
 
     for (int i = 0; i < 3; i++)
     {
@@ -337,6 +357,10 @@ void RunTest(int core_id)
     SanityCheckTsc(&tsc_sanity, core_id);
 
     char detail[128];
+
+	auto elevation_flagged = tsc_sanity.is_vmexit_trigger_elevation();
+	sprintf(detail, "%i pstate violations", tsc_sanity.pstate_vilolations);
+	log_check("VMExit trigger elevation", "1", elevation_flagged, detail);
 
     auto interval_flagged = tsc_sanity.is_interval_desynced();
     sprintf(detail, "%i%% desync", tsc_sanity.interval_desync_percent());
@@ -361,7 +385,7 @@ void RunTest(int core_id)
     }
     log_check("Workload desynchronization", "20 cycles", workload_flagged, detail);
 
-    log_summary(interval_flagged, tsc_flagged, workload_flagged);
+    log_summary(interval_flagged, tsc_flagged, workload_flagged, elevation_flagged);
     return;
 }
 
