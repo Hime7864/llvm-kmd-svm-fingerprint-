@@ -75,7 +75,7 @@ The important timing sources captured in TSC_DATA are:
 00000015	0.00680030	 	
 ```
 svm accounting for aperf/mperf spoofing in relation to tsc clock rewinding with core resynchronization, vmexiting and syncing all p0 derived tsc clocks
-```
+```cpp
 case MSR::_MSR_EFER:
 {
 				if (exitInfo1.MSR.isWrite)
