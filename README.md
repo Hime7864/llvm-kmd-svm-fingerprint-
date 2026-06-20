@@ -10,8 +10,8 @@ These two sources serve as a ground truth for elapsed time. Using them, the expe
 
 The detector currently reports three checks:
 
-- TSC desynchronization: compares `Core::X86::Msr::MPERF` against `Core::X86::Msr::TSC`, `RDTSC`, and `RDTSCP`. It flags when TSC-style time does not advance consistently with the reference performance counter by more than 5%.
-- Interval desynchronization: compares the measured probe interval against the interval expected from the P0 state after syncing it to the I/O APIC timer. It flags when the interval is more than `5%` out of sync.
+- `TSC desynchronization`: compares `MPERF` against `TSC`, `RDTSC`, and `RDTSCP`. It flags when these P0-derived TSC time does not advance consistently with the reference performance counter by more than 5%.
+- `Interval desynchronization`: compares the measured probe interval against the interval expected from the P0 state after syncing it to the I/O APIC timer. It flags when the interval is more than `5%` out of sync.
 - `Workload desynchronization`: estimates whether the APERF-reported cycles match the amount of work completed in the MSR-read loop. It flags when more than `20` cycles per measured batch appear to be missing. This metric can also give a rough estimate of how much time the VMM is hiding.
 
 The probe flow is:
