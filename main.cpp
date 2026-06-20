@@ -268,8 +268,18 @@ public:
         reported_cycles = aperf_delta_ajusted;
         missing_cycles = abs64((UINT64)((double)aperf_delta_ajusted * interval_desync_ratio));
 		counter_total = (UINT64)((double)pm_counter * io_ratio);
+
+        old_cppc = MSR::CPPC_REQUEST();
+        target_cppc.DesPerf = target_cppc.MaxPerf;
+        MSR::CPPC_REQUEST(target_cppc);
+        MSR_PSTATE_CONTROL cmd;
+        cmd.PstateCmd = 0;
+		MSR::PSTATE_CONTROL(cmd);
         svme_enabled = MSR::EFER().svme;
         pstate_vilolation = MSR::PSTATE_STATUS().CurPstate != 1;
+
+        MSR::CPPC_REQUEST(old_cppc);
+        
 
         return true;
     }
@@ -281,7 +291,7 @@ public:
 
         printf("\n");
         printf("========================================\n");
-        printf("           SANITY CHECK\n");
+        printf("            EFER RESULTS\n");
         printf("========================================\n");
 
         printf("  %-30s %-9s\n", "SVME state", svme_enabled ? "ON" : "OFF");
@@ -343,6 +353,7 @@ public:
 
 NTSTATUS DriverEntry()
 {
+	printf("Starting sanity check...\n");
     MSR_CPPC_REQUEST cppc_request;
     auto cppc_capabilities = MSR::CPPC_CAPABILITY_1();
     cppc_request.MinPerf = cppc_capabilities.LowestPerf;
@@ -354,10 +365,11 @@ NTSTATUS DriverEntry()
     auto irql = _mm_readcr8();
     _mm_writecr8(15);
     sanity->Run(cppc_request);
-    sanity->log_results();
     _mm_writecr8(irql);
 
-    ExFreePool(sanity);
+    sanity->log_results();
 
+    ExFreePool(sanity);
+	printf("Sanity check completed.\n");
     return STATUS_SUCCESS;
 }
