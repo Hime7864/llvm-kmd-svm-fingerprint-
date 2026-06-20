@@ -66,7 +66,7 @@ void read_tsc_data(TSC_DATA* data)
 {
     data->aperf = MSR::APERF();
     data->mperf = MSR::MPERF();
-    data->energy = _mm_readmsr(0xC001029A);
+    //data->energy = _mm_readmsr(0xC001029A);
     data->msr_tsc = MSR::TSC();
     data->io_apicTimer = io_apic_rtc();
     data->rdtsc = __rdtsc();
