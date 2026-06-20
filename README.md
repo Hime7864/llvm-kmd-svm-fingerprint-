@@ -56,3 +56,45 @@ The important timing sources captured in TSC_DATA are:
 00000014	0.00573860	========================================	
 00000015	0.00573870	 
 ```
+
+```
+00000001	0.00000000	 	
+00000002	0.00000200	========================================	
+00000003	0.00000300	  SVM SVME Spoofing Detectornator	
+00000004	0.00000390	========================================	
+00000005	0.00000490	  Running probes on core 0...	
+00000006	0.00000510	 	
+00000007	0.00679330	  EFER read overhead             OK         145 cycles (limit: 1000)	
+00000008	0.00679450	  Power state elevation          OK         0 violations (limit: 1)	
+00000009	0.00679570	  Interval desynchronization     FLAGGED    73% desync (limit: 5%)	
+00000010	0.00679660	  TSC desynchronization          FLAGGED    99% desync (limit: 5%)	
+00000011	0.00679800	  Workload desynchronization     FLAGGED    3208093 missing cycles, ~0 RTC cycles (limit: 20 cycles)	
+00000012	0.00679870	----------------------------------------	
+00000013	0.00679940	  Result: FLAGGED (3/5 checks flagged)	
+00000014	0.00680020	========================================	
+00000015	0.00680030	 	
+```
+svm accounting for aperf/mperf spoofing in relation to tsc clock rewinding with core resynchronization, vmexiting and syncing all p0 derived tsc clocks
+```
+case MSR::_MSR_EFER:
+{
+				if (exitInfo1.MSR.isWrite)
+				{
+					auto efer = MSR::EFER();
+					auto tsc = __rdtsc();
+					MSR::EFER(efer);
+					storage->tsc_step = (__rdtsc() - tsc);
+					storage->efer.data.AsUINT64 = gCtx->Rdx << 32 | (ssa->Rax & 0xFFFFFFFF);
+				}
+				else
+				{
+					auto tsc = __rdtsc();
+					MSR::EFER();
+					storage->tsc_step = (__rdtsc() - tsc);
+					ssa->Rax = storage->efer.data.AsUINT64 & 0xFFFFFFFF;
+					gCtx->Rdx = (storage->efer.data.AsUINT64 >> 32) & 0xFFFFFFFF;
+				}
+				storage->aperf_last = storage->aperf_init;
+				storage->mperf_last = storage->mperf_init;
+}break;
+```
