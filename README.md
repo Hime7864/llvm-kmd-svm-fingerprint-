@@ -33,3 +33,23 @@ The important timing sources captured in TSC_DATA are:
 - `RDTSCP`: serialized timestamp counter instruction.
 - `APIC Timer`: external timer source read through I/O ports.
 - `counter`: number of EFER operations completed during the probe interval.
+
+# Example output
+
+```
+00000001	0.00000000	 	
+00000002	0.00000200	========================================	
+00000003	0.00000290	  SVM SVME Spoofing Detectornator	
+00000004	0.00000370	========================================	
+00000005	0.00000460	  Running probes on core 0...	
+00000006	0.00000470	 	
+00000007	0.00573280	  EFER read overhead             OK         93 cycles (limit: 1000)	
+00000008	0.00573390	  Power state elevation          OK         0 violations (limit: 1)	
+00000009	0.00573480	  Interval desynchronization     OK         0% desync (limit: 5%)	
+00000010	0.00573560	  TSC desynchronization          OK         0% desync (limit: 5%)	
+00000011	0.00573670	  Workload desynchronization     OK         1 cycles unaccounted for (limit: 20 cycles)	
+00000012	0.00573720	----------------------------------------	
+00000013	0.00573800	  Result: CLEAN  (0/5 checks flagged)	
+00000014	0.00573860	========================================	
+00000015	0.00573870	 
+```
