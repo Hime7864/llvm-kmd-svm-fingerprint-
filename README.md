@@ -1,7 +1,8 @@
 # SVM TSC Spoofing Detection
 
-This project is an research driver used for detecting VMMs that shadow EFER.SVME and spoof performance timers to hide that SVM is active.I've seen many people just read an MSR 10k times and look at the average — this is the next level past that. It specifically targets the "missing time" caused by compensations made on the guest-visible clocks.
-It works by correlating two hard-to-spoof, consistent time sources:
+This project is a research driver designed to detect VMMs that shadow SVME and spoof performance-monitoring timers in order to hide active SVM virtualization.
+While many existing approaches simply read an MSR thousands of times and check the average, this goes significantly further. It specifically targets the subtle “missing time” introduced by the compensations VMMs apply to guest-visible clocks.
+It works by correlating two hard-to-spoof, highly consistent time sources:
 
 - `CORE_ENERGY_STAT` — a read-only MSR that updates at a steady ~10-15 ms cadence.
 - `I/O APIC timer` — an independent hardware timer driven by its own crystal oscillator.
