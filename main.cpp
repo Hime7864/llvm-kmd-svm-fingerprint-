@@ -302,7 +302,7 @@ public:
         printf("========================================\n");
 
         printf("  %-30s %-9s\n", "SVME state", svme_enabled ? "ON" : "OFF");
-        printf("  %-30s %-9i  %i expected\n", "PM Counter", pm_counter, (UINT64)((double)pm_counter * (1.0 + interval_desync_ratio * tsc_desync_ratio)));
+        printf("  %-30s %-9i  %llu expected\n", "PM Counter", pm_counter, (UINT64)((double)pm_counter * (1.0 + fabs(interval_desync_ratio) * fabs(tsc_desync_ratio))));
 
 		auto efer_flagged = report_efer_average(1000);
 		sprintf(detail, "%llu %s", get_efer_average(), "cycles");
