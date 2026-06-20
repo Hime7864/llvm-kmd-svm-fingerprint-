@@ -6,7 +6,7 @@ It works by correlating two hard-to-spoof, consistent time sources:
 - `Core::X86::Msr::CORE_ENERGY_STAT` — a read-only MSR that updates at a steady ~10-15 ms cadence.
 - The I/O APIC timer — an independent hardware timer driven by its own crystal oscillator.
 
-Those two sources provide a root of truth for elapsed time. The expected elapsed cycles can then be checked against P0 derived timings, `MPERF`, `MSR TSC`, `RDTSC`, and `RDTSCP`.
+These two sources serve as a ground truth for elapsed time. Using them, the expected cycle count can be calculated and compared against the P0-derived timings to quantify any desyncs introduced by time negation in the guest.
 
 The detector currently reports three checks:
 
