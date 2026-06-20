@@ -270,7 +270,7 @@ public:
         interval_desync_ratio = (expected_sync_ratio / 5.0) - 1.0;
 
         reported_cycles = aperf_delta_ajusted;
-        missing_cycles = abs64((UINT64)((double)aperf_delta_ajusted * interval_desync_ratio));
+        missing_cycles = abs64((UINT64)((double)aperf_delta_ajusted * interval_desync_ratio * tsc_desync_ratio));
 		counter_total = (UINT64)((double)pm_counter * io_ratio);
 
         //UINT64 unit = _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS);
@@ -302,7 +302,7 @@ public:
         printf("========================================\n");
 
         printf("  %-30s %-9s\n", "SVME state", svme_enabled ? "ON" : "OFF");
-        printf("  %-30s %i cycles\n", "PM Counter", pm_counter);
+        printf("  %-30s %-9i  %i expected\n", "PM Counter", pm_counter, (UINT64)((double)pm_counter * (1.0 + interval_desync_ratio * tsc_desync_ratio)));
 
 		auto efer_flagged = report_efer_average(1000);
 		sprintf(detail, "%llu %s", get_efer_average(), "cycles");

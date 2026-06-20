@@ -20,23 +20,26 @@ The detection logic lives in two structures in `main.cpp`:
 
 ## Reported checks
 
-The detector currently reports five flagged checks plus one informational SVME line:
+The detector currently reports five flagged checks plus two informational lines:
 
-- `SVME state` (informational): reads `EFER.SVME` after the probe and prints `ON` or `OFF`. Not counted toward the flagged total.
+- `SVME state` (informational): after the probe, reads `EFER.SVME` in a loop (`pm_counter / 2` iterations) and prints `ON` or `OFF`. Not counted toward the flagged total.
+- `PM Counter` (informational): prints how many EFER reads completed during the gated probe window. Not counted toward the flagged total.
 - `EFER read average`: reads EFER 1000 times at elevated IRQL and measures the average RDTSC delta around each read. Flags when the average exceeds 1000 cycles.
-- `Power state elevation`: after the probe, forces P0 via CPPC max performance and `PSTATE_CONTROL`, then checks whether `CurPstate` stayed at 1. Flags on any violation (suggesting VM-exit-triggered elevation or P-state shadowing).
+- `Power state elevation`: after the probe, forces P0 via CPPC max performance and `PSTATE_CONTROL` (`PstateCmd = 0`), then flags when `CurPstate` matches the commanded P-state.
 - `TSC desynchronization`: compares writable APERF/MPERF against their read-only counterparts, then compares MPERF against MSR TSC, RDTSC, and RDTSCP. Flags when the average ratio drift exceeds 5%.
 - `Interval desynchronization`: normalizes probe deltas with the I/O APIC timer and compares the measured interval against the expected P0 frequency across MPERF, MPERF read-only, MSR TSC, RDTSC, and RDTSCP. Flags when the interval is more than 5% out of sync.
-- `Workload desynchronization`: estimates whether APERF-reported cycles match the amount of work completed in the EFER-read loop. Flags when more than 20 cycles per measured batch appear to be missing.
+- `Workload desynchronization`: estimates missing cycles using both desync ratios (`aperf_delta * interval_desync_ratio * tsc_desync_ratio`) and compares APERF-reported batch cycles against the expected workload. Flags when more than 20 cycles per measured batch appear to be missing.
+
+Desync percentages are formatted without floating-point print support: values are scaled to hundredths and rendered as `%i.%i` (whole and fractional parts) via `format_desync_percent()`.
 
 ## Probe flow
 
 1. `DriverEntry()` builds a CPPC request from `MSR_CPPC_CAPABILITY_1` with `DesPerf` set to nominal (P1) to disable boosting during the measurement window.
 2. `SANITY_DATA::Run()` saves the current CPPC request, applies the target CPPC settings, and calls `Probe()`.
-3. `Probe()` measures read overhead, waits for `MSR_L3_PACKAGE_ENERGY_STATUS` to change, snapshots all timing sources, then repeatedly reads EFER until the energy MSR changes again. This gives a roughly 10-15 ms window and records how many EFER reads completed.
+3. `Probe()` measures read overhead, waits for `MSR_L3_PACKAGE_ENERGY_STATUS` to change, snapshots all timing sources, then repeatedly reads EFER until the energy MSR changes again. This gives a roughly 10-15 ms window and records how many EFER reads completed in `pm_counter`.
 4. `Run()` computes I/O APIC-normalized deltas and desync ratios across all timing sources, including read-only APERF/MPERF.
-5. `Run()` then forces P0 (CPPC max perf + `PstateCmd = 0`), reads `EFER.SVME`, and checks whether the core remained at P-state 1.
-6. `log_results()` prints the SVME state, EFER average, and the four desync checks.
+5. `Run()` then forces P0 (CPPC max perf + `PstateCmd = 0`), reads `EFER.SVME` repeatedly, and evaluates the current P-state against the commanded value.
+6. `log_results()` prints SVME state, PM counter, EFER average, and the four desync checks.
 
 ## Timing sources
 
@@ -57,11 +60,12 @@ Clean run:
 
 ```
 Starting sanity check...
- 
+
 ========================================
             EFER RESULTS
 ========================================
-  SVME state                     OFF      
+  SVME state                     OFF
+  PM Counter                     8421 cycles
   EFER read average              OK         105 cycles (limit: 1000 cycles)
   Power state elevation          OK         0 violations (limit: 1)
   TSC desynchronization          OK         0.1% desync (limit: 5%)
@@ -70,19 +74,20 @@ Starting sanity check...
 ----------------------------------------
   Result: CLEAN  (0/5 checks flagged)
 ========================================
- 
+
 Sanity check completed.
 ```
 
-Flagged run (VM with TSC/APERATION counter spoofing):
+Flagged run (VM with TSC/APERF counter spoofing):
 
 ```
 Starting sanity check...
- 
+
 ========================================
             EFER RESULTS
 ========================================
-  SVME state                     OFF      
+  SVME state                     OFF
+  PM Counter                     8103 cycles
   EFER read average              OK         150 cycles (limit: 1000 cycles)
   Power state elevation          FLAGGED    1 violations (limit: 1)
   TSC desynchronization          FLAGGED    439205.29% desync (limit: 5%)
@@ -91,7 +96,7 @@ Starting sanity check...
 ----------------------------------------
   Result: FLAGGED (4/5 checks flagged)
 ========================================
- 
+
 Sanity check completed.
 ```
 
