@@ -273,10 +273,6 @@ public:
         missing_cycles = abs64((UINT64)((double)aperf_delta_ajusted * interval_desync_ratio * tsc_desync_ratio));
 		counter_total = (UINT64)((double)pm_counter * io_ratio);
 
-        //UINT64 unit = _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS);
-        //while (unit == _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS))
-        //    _mm_pause();
-
         old_cppc = MSR::CPPC_REQUEST();
         target_cppc.DesPerf = target_cppc.MaxPerf;
         MSR::CPPC_REQUEST(target_cppc);
