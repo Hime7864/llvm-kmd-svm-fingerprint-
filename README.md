@@ -1,53 +1,35 @@
-# llvm-kmd
+# SVM TSC Spoofing Detection
 
-`llvm-kmd` is a small x64 Windows kernel-mode boilerplate built around Clang/LLVM-style development rather than the normal MSVC/WDK workflow.
+This project is an research driver used for detecting VMMs that shadow Core::X86::Msr::EFER.SVME and spoof performance timers to hide that SVM is active.I've seen many people just read an MSR 10k times and look at the average — this is the next level past that. It specifically targets the "missing time" caused by compensations made on the guest-visible clocks.
+It works by correlating two hard-to-spoof, highly consistent time sources:
 
-The goal is to provide a reusable base for low-level kernel projects where importing undocumented functions, structures, CPU intrinsics, and utility code into a fresh WDK project would otherwise mean repeating the same setup work each time.
+- `Core::X86::Msr::CORE_ENERGY_STAT` — a read-only MSR that updates at a steady ~10-15 ms cadence.
+- The I/O APIC timer — an independent hardware timer driven by its own crystal oscillator that stays relatively consistent across almost every system.
 
-## Why This Exists
+Those two sources provide a root of truth for elapsed time. The expected elapsed work can then be checked against P0-state-derived timing, APERF/MPERF, `MSR_TSC`, `RDTSC`, and `RDTSCP`.
 
-I created this project because there is not a comfortable non-MSVC WDK-style base for the kind of kernel research projects I work on. When working with undocumented routines and structures, bringing everything into a new WDK project repeatedly becomes tedious. This repository is meant to be a personal boilerplate that I can fork when starting something new.
 
-It also pulls in two smaller experiments:
+The detector currently reports three checks:
 
-- `DTLB`: helpers for experimenting with global PTE translations that can linger in the DTLB across CR3 switches, allowing research into physical-address targeting without relying on Windows physical-memory APIs.
-- `FWA`: helpers for working with memory outside normal Windows commitments, including locating regions such as EFI modules that survive `ExitBootServices`.
+- TSC desynchronization: compares `Core::X86::Msr::MPERF` against `Core::X86::Msr::TSC`, `RDTSC`, and `RDTSCP`. It flags when TSC-style time does not advance consistently with the reference performance counter by more than 5%.
+- Interval desynchronization: compares the measured probe interval against the interval expected from the P0 state after syncing it to the I/O APIC timer. It flags when the interval is more than `5%` out of sync.
+- `Workload desynchronization`: estimates whether the APERF-reported cycles match the amount of work completed in the MSR-read loop. It flags when more than `20` cycles per measured batch appear to be missing. This metric can also give a rough estimate of how much time the VMM is hiding.
 
-The CPU support is intentionally focused on what I currently need, mostly AMD-oriented MSR and CPUID helpers. The project does not try to cover every MSR or CPUID leaf up front; new definitions can be added as future projects need them.
+The probe flow is:
 
-## Project Layout
+1. `RunTest()` starts a TSC sanity check for the selected compute unit.
+2. `SanityCheckTsc()` runs the lower-level probe three times and keeps the sample with the smallest missing-cycle estimate.
+3. `ProtoSanityCheckTsc()` builds the probe configuration from `MSR_CPPC_CAPABILITY_1`, requests a high-performance CPPC/P-state target, and dispatches the probe across processors with `KeIpiGenericCall()`.
+4. `IpiCoreHandler()` filters processors by AMD compute unit ID (from CPUID leaf 0x8000001E) so that both logical processors on the same physical core execute the probe code simultaneously. This prevents the core from being dirtied by unrelated threads. It then raises IRQL, forces P-state command 0, applies the CPPC request, and runs the counter probe.
+5. `ProbeCounters()` waits for `Core::X86::Msr::CORE_ENERGY_STAT` to change, snapshots all timing sources, then repeatedly reads `Core::X86::Msr::EFER` until `Core::X86::Msr::CORE_ENERGY_STAT` changes again. This gives the probe a roughly 10-15 ms measurement window and records how many intercepted-looking MSR reads completed inside that window.
+6. `ProtoSanityCheckTsc()` normalizes the deltas with the I/O APIC timer, compares them against the expected P0-state interval, and calculates the final missing-time/desynchronization ratios.
 
-- `main.cpp`: current driver entry point.
-- `Intrinsics/assembly.hpp`: low-level CPU instruction wrappers.
-- `Intrinsics/cpuid.*`: CPUID feature helpers.
-- `Intrinsics/msr.*`: MSR helpers and definitions.
-- `Intrinsics/crt.*`: minimal CRT routines for freestanding kernel-style code.
-- `Intrinsics/imports.hpp`: kernel import table and wrapper functions.
-- `Intrinsics/import_resolve.cpp`: export and signature-based import resolution.
-- `Intrinsics/utils_*`: PE parsing, signature scanning, address translation, and location helpers.
-- `Intrinsics/fwa.*`: firmware/unused physical memory allocation helpers.
-- `Intrinsics/dtlb_*`: DTLB/page-table helpers for global translation experiments.
-- `Intrinsics/bootstrap.hpp` and `Intrinsics/driver_boot.cpp`: custom startup, import resolution, and cleanup flow.
+The important timing sources captured in `TSC_DATA` are:
 
-## Build Notes
-
-The Visual Studio project is configured for x64 ClangCL builds and emits a `.sys` target for x64 configurations. This is not a standard WDK driver template, and it intentionally avoids relying on normal WDK imports in favor of its own import table and supporting definitions.
-
-This repository is best treated as a research and boilerplate base. Kernel-mode code can crash or corrupt the system if used incorrectly, so test only in controlled environments such as VMs or dedicated test machines.
-
-## Current State
-
-The current `DriverEntry` is intentionally minimal and only prints a debug message. Most of the value in the repository is the supporting runtime and low-level helper code rather than a finished driver feature.
-
-## Limitations
-
-- x64-focused.
-- AMD-focused in the current MSR/CPUID coverage.
-- Not a complete WDK replacement.
-- No broad Windows build compatibility matrix.
-- Signature-based imports may need updates across Windows versions.
-- No automated tests are currently included.
-
-## License
-
-No license has been specified yet.
+- `APERF`: actual performance clock count.
+- `MPERF`: max/reference performance clock count.
+- `MSR_TSC`: TSC value read through the TSC MSR.
+- `RDTSC`: direct timestamp counter instruction.
+- `RDTSCP`: serialized timestamp counter instruction.
+- `APIC Timer`: external timer source read through I/O ports.
+- `counter`: number of `RDMSR(EFER)` operations completed during the probe interval.
