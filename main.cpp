@@ -242,7 +242,7 @@ static void log_banner()
 {
     printf("\n");
     printf("========================================\n");
-    printf("  SVM TSC Fingerprint Detection\n");
+    printf("  SVM SVME Spoofing Detectornator\n");
     printf("========================================\n");
     return;
 }
@@ -257,15 +257,15 @@ static void log_check(const char* name, const char* threshold, bool flagged, con
     return;
 }
 
-static void log_summary(bool interval_flagged, bool tsc_flagged, bool workload_flagged, bool elevation_flagged)
+static void log_summary(bool interval_flagged, bool tsc_flagged, bool workload_flagged, bool elevation_flagged, bool efer_overhead_flagged)
 {
-    int flagged_count = (interval_flagged ? 1 : 0) + (tsc_flagged ? 1 : 0) + (workload_flagged ? 1 : 0) + (elevation_flagged ? 1 : 0);
+    int flagged_count = (interval_flagged ? 1 : 0) + (tsc_flagged ? 1 : 0) + (workload_flagged ? 1 : 0) + (elevation_flagged ? 1 : 0) + (efer_overhead_flagged ? 1 : 0);
 
     printf("----------------------------------------\n");
     if (flagged_count == 0)
-        printf("  Result: CLEAN  (0/4 checks flagged)\n");
+        printf("  Result: CLEAN  (0/5 checks flagged)\n");
     else
-        printf("  Result: FLAGGED (%i/4 checks flagged)\n", flagged_count);
+        printf("  Result: FLAGGED (%i/5 checks flagged)\n", flagged_count);
     printf("========================================\n\n");
     return;
 }
@@ -347,20 +347,66 @@ void SanityCheckTsc(TSC_SANITY_DATA* output, int core_id)
     return;
 }
 
+INT64 GetEferAverage()
+{
+	auto irql = _mm_readcr8();
+	_mm_writecr8(15);
+    INT64 total = 0ULL;
+    for (int i = 0; i < 1000; i++)
+    {
+		auto tsc = __rdtsc();
+		auto efer = MSR::EFER();
+        total += __rdtsc() - tsc;
+    }
+	_mm_writecr8(irql);
+    return total / 1000;
+}
+
+bool is_efer_overhead_high(INT64* data)
+{
+    *data = GetEferAverage();
+    return (UINT64)*data > 1000ull;
+}
+
+//bool pstate_shadowing_violation()
+//{
+//    int result = 0;
+//    MSR_PSTATE_CONTROL control;
+//    for (int i = 0; i < 8; i++)
+//	{
+//        control.PstateCmd = !MSR::PSTATE_STATUS().CurPstate;
+//		MSR::PSTATE_CONTROL(control);
+//        if (control.PstateCmd == MSR::PSTATE_STATUS().CurPstate)
+//        {
+//            result++;
+//        }
+//	}
+//    return result > 5;
+//}
+
 
 void RunTest(int core_id)
 {
     log_banner();
-    printf("  Running probes on core %i...\n\n", core_id + 1);
+    printf("  Running probes on core %i...\n\n", core_id);
 
     TSC_SANITY_DATA tsc_sanity{ 0 };
     SanityCheckTsc(&tsc_sanity, core_id);
 
-    char detail[128];
+    char detail[256]{0};
+
+	INT64 efer_overhead = 0;
+	auto efer_overhead_flagged = is_efer_overhead_high(&efer_overhead);
+	sprintf(detail, "%i cycles", efer_overhead);
+	log_check("EFER read overhead", "1000", efer_overhead_flagged, detail);
+
+    //auto pstate_shadowing_flagged = pstate_shadowing_violation();
+    //sprintf(detail, "%i", pstate_shadowing_flagged);
+    //log_check("P-state shadowing violation", "0", pstate_shadowing_flagged, detail);
 
 	auto elevation_flagged = tsc_sanity.is_vmexit_trigger_elevation();
-	sprintf(detail, "%i pstate violations", tsc_sanity.pstate_vilolations);
-	log_check("VMExit trigger elevation", "1", elevation_flagged, detail);
+	sprintf(detail, "%i violations", tsc_sanity.pstate_vilolations);
+	log_check("Power state elevation", "1", elevation_flagged, detail);
 
     auto interval_flagged = tsc_sanity.is_interval_desynced();
     sprintf(detail, "%i%% desync", tsc_sanity.interval_desync_percent());
@@ -385,7 +431,7 @@ void RunTest(int core_id)
     }
     log_check("Workload desynchronization", "20 cycles", workload_flagged, detail);
 
-    log_summary(interval_flagged, tsc_flagged, workload_flagged, elevation_flagged);
+    log_summary(interval_flagged, tsc_flagged, workload_flagged, elevation_flagged, efer_overhead_flagged);
     return;
 }
 
