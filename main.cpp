@@ -273,9 +273,9 @@ public:
         missing_cycles = abs64((UINT64)((double)aperf_delta_ajusted * interval_desync_ratio));
 		counter_total = (UINT64)((double)pm_counter * io_ratio);
 
-        UINT64 unit = _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS);
-        while (unit == _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS))
-            _mm_pause();
+        //UINT64 unit = _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS);
+        //while (unit == _mm_readmsr(MSR::_MSR_L3_PACKAGE_ENERGY_STATUS))
+        //    _mm_pause();
 
         old_cppc = MSR::CPPC_REQUEST();
         target_cppc.DesPerf = target_cppc.MaxPerf;
@@ -283,8 +283,9 @@ public:
         MSR_PSTATE_CONTROL cmd;
         cmd.PstateCmd = 0;
 		MSR::PSTATE_CONTROL(cmd);
-        svme_enabled = MSR::EFER().svme;
-        pstate_vilolation = MSR::PSTATE_STATUS().CurPstate != 1;
+        for (int i = 0; i < pm_counter / 2; i++)
+            svme_enabled = MSR::EFER().svme;
+        pstate_vilolation = MSR::PSTATE_STATUS().CurPstate == cmd.PstateCmd;
         MSR::CPPC_REQUEST(old_cppc);
 
         return;
@@ -292,7 +293,7 @@ public:
 
     void log_results()
     {
-        char detail[256]{};
+        char detail[128]{};
         int flagged_count = 0;
 
         printf("\n");
@@ -301,6 +302,7 @@ public:
         printf("========================================\n");
 
         printf("  %-30s %-9s\n", "SVME state", svme_enabled ? "ON" : "OFF");
+        printf("  %-30s %i cycles\n", "PM Counter", pm_counter);
 
 		auto efer_flagged = report_efer_average(1000);
 		sprintf(detail, "%llu %s", get_efer_average(), "cycles");
