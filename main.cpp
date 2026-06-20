@@ -127,6 +127,12 @@ private:
 
     inline double fabs(double value) { return (value < 0.0) ? -value : value; }
 
+    void format_desync_percent(double value, char* buffer)
+    {
+        INT64 scaled = (INT64)(value * 100.0);
+        sprintf(buffer, "%i.%i%% desync", (int)(scaled / 100), (int)(scaled % 100));
+    }
+
     void Probe()
     {
         pm0.pstate = MSR::PSTATE_STATUS().CurPstate;
@@ -185,24 +191,22 @@ public:
         return pstate_vilolation;
     }
 
-    INT64 get_tsc_desync()
+    double get_tsc_desync()
     {
-        auto percent = (INT64)(fabs(tsc_desync_ratio) * 100.0);
-        return abs64(percent);
+        return fabs(tsc_desync_ratio) * 100.0;
     }
 
-    bool report_tsc_desync(INT64 threshold)
+    bool report_tsc_desync(double threshold)
     {
         return get_tsc_desync() > threshold;
     }
 
-    INT64 get_interval_desync()
+    double get_interval_desync()
     {
-        auto percent = (INT64)(fabs(interval_desync_ratio) * 100.0);
-        return abs64(percent);
+        return fabs(interval_desync_ratio) * 100.0;
 	}
 
-    bool report_interval_desync(INT64 threshold)
+    bool report_interval_desync(double threshold)
     {
         return get_interval_desync() > threshold;
     }
@@ -314,8 +318,8 @@ public:
             "1");
         flagged_count += elevation_flagged ? 1 : 0;
 
-        auto tsc_flagged = report_tsc_desync(5);
-        sprintf(detail, "%i%% desync", (int)get_tsc_desync());
+        auto tsc_flagged = report_tsc_desync(5.0);
+        format_desync_percent(get_tsc_desync(), detail);
         printf("  %-30s %-9s  %s (limit: %s)\n",
             "TSC desynchronization",
             tsc_flagged ? "FLAGGED" : "OK",
@@ -323,8 +327,8 @@ public:
             "5%");
         flagged_count += tsc_flagged ? 1 : 0;
 
-        auto interval_flagged = report_interval_desync(5);
-        sprintf(detail, "%i%% desync", (int)get_interval_desync());
+        auto interval_flagged = report_interval_desync(5.0);
+        format_desync_percent(get_interval_desync(), detail);
         printf("  %-30s %-9s  %s (limit: %s)\n",
             "Interval desynchronization",
             interval_flagged ? "FLAGGED" : "OK",

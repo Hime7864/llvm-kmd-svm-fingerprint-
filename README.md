@@ -4,97 +4,123 @@ This project is a research driver designed to detect VMMs that shadow SVME and s
 The detector combines a basic EFER read-overhead check with timing correlation checks that target the subtle missing time introduced by the compensation logic VMMs apply to guest-visible clocks.
 It works by correlating two hard-to-spoof, highly consistent time sources:
 
-- `CORE_ENERGY_STAT` — a read-only MSR that updates at a steady ~10-15 ms cadence.
+- `MSR_L3_PACKAGE_ENERGY_STATUS` — a read-only MSR that updates at a steady ~10-15 ms cadence, used to gate the probe window.
 - `I/O APIC timer` — an independent hardware timer driven by its own crystal oscillator.
 
 These two sources serve as a ground truth for elapsed time. Using them, the expected cycle count can be calculated and compared against the P0-derived timings to quantify any desyncs introduced by time negation in the guest.
 
-The detector currently reports five checks:
+## Architecture
 
-- `EFER read overhead`: reads EFER repeatedly and measures the average RDTSC delta around each read. It flags when the average EFER read cost is greater than 1000 cycles.
-- `Power state elevation`: tracks whether the probe observed power-state behavior that suggests VM-exit-triggered elevation. It flags when any violations are reported.
-- `TSC desynchronization`: compares MPERF against MSR::TSC, RDTSC, and RDTSCP. It flags when these P0-derived TSC sources do not advance consistently with the reference performance counter by more than 5%.
-- `Interval desynchronization`: compares the measured probe interval against the interval expected from the P0 state after syncing it to the I/O APIC timer. It flags when the interval is more than 5% out of sync.
-- `Workload desynchronization`: estimates whether the APERF-reported cycles match the amount of work completed in the MSR-read loop. It flags when more than 20 cycles per measured batch appear to be missing. This metric can also give a rough estimate of how much time the VMM is hiding.
+The detection logic lives in two structures in `main.cpp`:
 
-The probe flow is:
+- `PERFORMANCE_DATA` — snapshots and diffs all timing sources (`read_tsc()`, `diff_tsc()`, overhead measurement).
+- `SANITY_DATA` — runs the probe, computes desync ratios, and prints results via `log_results()`.
 
-1. `RunTest()` starts a TSC sanity check for the selected compute unit.
-2. `SanityCheckTsc()` runs the probe three times and keeps the sample with the smallest missing-cycle estimate.
-3. `ProtoSanityCheckTsc()` builds the probe configuration from MSR_CPPC_CAPABILITY_1, requests a high-performance CPPC/P-state target, and dispatches the probe across processors with `KeIpiGenericCall()`.
-4. `IpiCoreHandler()` filters processors by AMD compute unit ID (CPUID Fn8000_001E_EBX Compute Unit Identifiers) so that both logical processors on the same physical core execute the probe code simultaneously. This prevents the core from being dirtied by unrelated threads. It then raises IRQL, applies the CPPC request, and runs the counter probe.
-5. `ProbeCounters()` waits for CORE_ENERGY_STAT to change, snapshots all timing sources, then repeatedly reads EFER until CORE_ENERGY_STAT changes again. This gives the probe a roughly 10-15 ms measurement window and records how many intercepted-looking MSR reads completed inside that window.
-6. `ProtoSanityCheckTsc()` normalizes the deltas with the I/O APIC timer, compares them against the expected P0-state interval, and calculates the final missing-time/desynchronization ratios.
-7. `GetEferAverage()` raises IRQL, reads EFER 1000 times, and records the average RDTSC delta as a direct EFER read-overhead signal.
+`DriverEntry()` allocates a `SANITY_DATA` instance, raises IRQL to `DISPATCH_LEVEL`, runs the probe, logs results, and frees the buffer.
 
-The important timing sources captured in TSC_DATA are:
+## Reported checks
 
-- `APERF`: actual performance clock count.
-- `MPERF`: max/reference performance clock count.
+The detector currently reports five flagged checks plus one informational SVME line:
+
+- `SVME state` (informational): reads `EFER.SVME` after the probe and prints `ON` or `OFF`. Not counted toward the flagged total.
+- `EFER read average`: reads EFER 1000 times at elevated IRQL and measures the average RDTSC delta around each read. Flags when the average exceeds 1000 cycles.
+- `Power state elevation`: after the probe, forces P0 via CPPC max performance and `PSTATE_CONTROL`, then checks whether `CurPstate` stayed at 1. Flags on any violation (suggesting VM-exit-triggered elevation or P-state shadowing).
+- `TSC desynchronization`: compares writable APERF/MPERF against their read-only counterparts, then compares MPERF against MSR TSC, RDTSC, and RDTSCP. Flags when the average ratio drift exceeds 5%.
+- `Interval desynchronization`: normalizes probe deltas with the I/O APIC timer and compares the measured interval against the expected P0 frequency across MPERF, MPERF read-only, MSR TSC, RDTSC, and RDTSCP. Flags when the interval is more than 5% out of sync.
+- `Workload desynchronization`: estimates whether APERF-reported cycles match the amount of work completed in the EFER-read loop. Flags when more than 20 cycles per measured batch appear to be missing.
+
+## Probe flow
+
+1. `DriverEntry()` builds a CPPC request from `MSR_CPPC_CAPABILITY_1` with `DesPerf` set to nominal (P1) to disable boosting during the measurement window.
+2. `SANITY_DATA::Run()` saves the current CPPC request, applies the target CPPC settings, and calls `Probe()`.
+3. `Probe()` measures read overhead, waits for `MSR_L3_PACKAGE_ENERGY_STATUS` to change, snapshots all timing sources, then repeatedly reads EFER until the energy MSR changes again. This gives a roughly 10-15 ms window and records how many EFER reads completed.
+4. `Run()` computes I/O APIC-normalized deltas and desync ratios across all timing sources, including read-only APERF/MPERF.
+5. `Run()` then forces P0 (CPPC max perf + `PstateCmd = 0`), reads `EFER.SVME`, and checks whether the core remained at P-state 1.
+6. `log_results()` prints the SVME state, EFER average, and the four desync checks.
+
+## Timing sources
+
+`PERFORMANCE_DATA` captures:
+
+- `APERF` / `MPERF`: writable performance counter MSRs.
+- `APERF_READ_ONLY` / `MPERF_READ_ONLY`: read-only counterparts used to detect counter shadowing.
 - `MSR_TSC`: TSC value read through the TSC MSR.
 - `RDTSC`: direct timestamp counter instruction.
 - `RDTSCP`: serialized timestamp counter instruction.
-- `APIC Timer`: external timer source read through I/O ports.
-- `counter`: number of EFER operations completed during the probe interval.
+- `io_apicTimer`: external timer source read through I/O ports.
+- `pstate`: current P-state from `MSR_PSTATE_STATUS`.
+- `pm_counter`: number of EFER reads completed during the probe interval.
 
 # Example output
 
-```
-00000001	0.00000000	 	
-00000002	0.00000200	========================================	
-00000003	0.00000290	  SVM SVME Spoofing Detectornator	
-00000004	0.00000370	========================================	
-00000005	0.00000460	  Running probes on core 0...	
-00000006	0.00000470	 	
-00000007	0.00573280	  EFER read overhead             OK         93 cycles (limit: 1000)	
-00000008	0.00573390	  Power state elevation          OK         0 violations (limit: 1)	
-00000009	0.00573480	  Interval desynchronization     OK         0% desync (limit: 5%)	
-00000010	0.00573560	  TSC desynchronization          OK         0% desync (limit: 5%)	
-00000011	0.00573670	  Workload desynchronization     OK         1 cycles unaccounted for (limit: 20 cycles)	
-00000012	0.00573720	----------------------------------------	
-00000013	0.00573800	  Result: CLEAN  (0/5 checks flagged)	
-00000014	0.00573860	========================================	
-00000015	0.00573870	 
-```
+Clean run:
 
 ```
-00000001	0.00000000	 	
-00000002	0.00000200	========================================	
-00000003	0.00000300	  SVM SVME Spoofing Detectornator	
-00000004	0.00000390	========================================	
-00000005	0.00000490	  Running probes on core 0...	
-00000006	0.00000510	 	
-00000007	0.00679330	  EFER read overhead             OK         145 cycles (limit: 1000)	
-00000008	0.00679450	  Power state elevation          OK         0 violations (limit: 1)	
-00000009	0.00679570	  Interval desynchronization     FLAGGED    73% desync (limit: 5%)	
-00000010	0.00679660	  TSC desynchronization          FLAGGED    99% desync (limit: 5%)	
-00000011	0.00679800	  Workload desynchronization     FLAGGED    3208093 missing cycles, ~0 RTC cycles (limit: 20 cycles)	
-00000012	0.00679870	----------------------------------------	
-00000013	0.00679940	  Result: FLAGGED (3/5 checks flagged)	
-00000014	0.00680020	========================================	
-00000015	0.00680030	 	
+Starting sanity check...
+ 
+========================================
+            EFER RESULTS
+========================================
+  SVME state                     OFF      
+  EFER read average              OK         105 cycles (limit: 1000 cycles)
+  Power state elevation          OK         0 violations (limit: 1)
+  TSC desynchronization          OK         0.1% desync (limit: 5%)
+  Interval desynchronization     OK         0.17% desync (limit: 5%)
+  Workload desynchronization     OK         2 cycles (limit: 20 cycles)
+----------------------------------------
+  Result: CLEAN  (0/5 checks flagged)
+========================================
+ 
+Sanity check completed.
 ```
-svm accounting for aperf/mperf spoofing in relation to tsc clock rewinding with core resynchronization, vmexiting and syncing all p0 derived tsc clocks
+
+Flagged run (VM with TSC/APERATION counter spoofing):
+
+```
+Starting sanity check...
+
+========================================
+            EFER RESULTS
+========================================
+  SVME state                     OFF
+  EFER read average              OK         145 cycles (limit: 1000 cycles)
+  Power state elevation          FLAGGED    1 violations (limit: 1)
+  TSC desynchronization          FLAGGED    99% desync (limit: 5%)
+  Interval desynchronization     FLAGGED    73% desync (limit: 5%)
+  Workload desynchronization     FLAGGED    3208093 cycles (limit: 20 cycles)
+----------------------------------------
+  Result: FLAGGED (3/5 checks flagged)
+========================================
+
+Sanity check completed.
+```
+
+# VMM compensation pattern
+
+A common VMM response to EFER reads is to rewind guest-visible TSC clocks and resynchronize APERF/MPERF on VM-exit, keeping all P0-derived TSC sources aligned:
+
 ```cpp
 case MSR::_MSR_EFER:
 {
-				if (exitInfo1.MSR.isWrite)
-				{
-					auto efer = MSR::EFER();
-					auto tsc = __rdtsc();
-					MSR::EFER(efer);
-					storage->tsc_step = (__rdtsc() - tsc);
-					storage->efer.data.AsUINT64 = gCtx->Rdx << 32 | (ssa->Rax & 0xFFFFFFFF);
-				}
-				else
-				{
-					auto tsc = __rdtsc();
-					MSR::EFER();
-					storage->tsc_step = (__rdtsc() - tsc);
-					ssa->Rax = storage->efer.data.AsUINT64 & 0xFFFFFFFF;
-					gCtx->Rdx = (storage->efer.data.AsUINT64 >> 32) & 0xFFFFFFFF;
-				}
-				storage->aperf_last = storage->aperf_init;
-				storage->mperf_last = storage->mperf_init;
-}break;
+    if (exitInfo1.MSR.isWrite)
+    {
+        auto efer = MSR::EFER();
+        auto tsc = __rdtsc();
+        MSR::EFER(efer);
+        storage->tsc_step = (__rdtsc() - tsc);
+        storage->efer.data.AsUINT64 = gCtx->Rdx << 32 | (ssa->Rax & 0xFFFFFFFF);
+    }
+    else
+    {
+        auto tsc = __rdtsc();
+        MSR::EFER();
+        storage->tsc_step = (__rdtsc() - tsc);
+        ssa->Rax = storage->efer.data.AsUINT64 & 0xFFFFFFFF;
+        gCtx->Rdx = (storage->efer.data.AsUINT64 >> 32) & 0xFFFFFFFF;
+    }
+    storage->aperf_last = storage->aperf_init;
+    storage->mperf_last = storage->mperf_init;
+} break;
 ```
+
+This is exactly the kind of compensation the desync checks are designed to surface: TSC sources may appear consistent with each other while drifting away from APERF, the I/O APIC timer, and the read-only performance counter MSRs.
